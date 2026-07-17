@@ -45,16 +45,33 @@ npm run smoke -- http://localhost:5174/
 
 ## 项目结构
 
-- `index.html`：Vite 应用入口
-- `src/main.js`：Vue 应用挂载入口
-- `src/App.vue`：应用外壳，页面由 Vue Router 渲染
-- `src/layouts/MainLayout.vue`：业务页左侧导航、顶部用户菜单和主工作区
-- `src/views/`：登录、智能问答、名片库、个人中心、人员主页、内容发布、内容详情和后台页面
-- `src/stores/`：Pinia 状态，承接认证、会话、AGUI、人员、内容、评价、反馈和后台数据
-- `src/services/agui/`：AGUI 事件流、mock agent 和行为上报接入层
-- `src/styles/element-theme.css`：Element Plus 主题覆盖
-- `assets/main.css`：全局视觉样式
-- `assets/logo.png`：平台 Logo
+### 仓库目录导航
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/` | 应用源代码，包含页面、组件、路由、状态管理、接口服务和通用工具。 |
+| `assets/` | 平台 Logo 与全局视觉样式。 |
+| `scripts/` | 本地验证脚本；`smoke-test.mjs` 用于浏览器冒烟测试。 |
+| `_snapshots/` | 旧版静态实现备份，用于回溯页面与交互演进，不作为当前应用入口。 |
+| `index.html` | Vite 应用 HTML 入口。 |
+| `package.json`、`package-lock.json` | 项目依赖、npm 脚本与依赖锁定文件。 |
+| `vite.config.js` | Vite 构建与开发服务配置。 |
+
+### `src/` 目录导航
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/main.js`、`src/App.vue` | Vue 应用挂载入口与根组件。 |
+| `src/views/` | 路由页面，包括登录、智能问答、名片库、个人中心、人员主页、内容发布、内容详情和后台看板。 |
+| `src/layouts/` | 业务页面通用布局，包括侧边导航、顶部栏和主工作区。 |
+| `src/components/` | 可复用业务组件；按 `ask/`、`profile/`、`directory/`、`content/`、`admin/` 等场景划分。 |
+| `src/router/` | 页面路由、路由名称和访问入口配置。 |
+| `src/stores/` | Pinia 状态管理，承接认证、会话、AGUI、人员、内容、评价、反馈和后台数据。 |
+| `src/services/` | 服务层：`api/` 为业务接口封装，`agui/` 为事件流与 Agent 对接，`mock/` 为模拟数据与本地实现。 |
+| `src/constants/` | 路由名称、权限和事件类型等共享常量。 |
+| `src/utils/` | 日期、格式化、匹配、数据规范化和本地存储等通用方法。 |
+| `src/styles/` | Element Plus 主题覆盖与局部样式配置。 |
+| `src/state.js` | 当前模拟数据与页面状态的基础定义。 |
 
 ## 当前边界与后续工作
 
