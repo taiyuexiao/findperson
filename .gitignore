@@ -1,1 +1,8 @@
+node_modules/
+dist/
 .DS_Store
+npm-debug.log*
+
+# Keep implementation plans and local Codex scratch assets out of the source repo.
+/方案/
+/.codex_tmp_*
