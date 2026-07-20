@@ -5,13 +5,13 @@
         <strong>{{ personName(review.personId) }}</strong>
         <time>{{ review.date }}</time>
       </div>
-      <p>{{ review.text }}</p>
+      <p class="sent-review-tag">{{ review.tag || review.text }}</p>
       <div class="form-actions">
-        <el-button class="secondary-button small-button" @click="$emit('continue', review)">继续评价</el-button>
-        <el-button class="secondary-button small-button" @click="$emit('delete', review.id)">删除评价</el-button>
+        <el-button class="secondary-button small-button" @click="$emit('continue', review)">继续补充</el-button>
+        <el-button class="secondary-button small-button" @click="$emit('delete', review.id)">删除</el-button>
       </div>
     </article>
-    <div v-if="!reviews.length" class="empty-state">暂时还没有你发出的评价。</div>
+    <div v-if="!reviews.length" class="empty-state">暂时还没有添加事项。</div>
   </div>
 </template>
 

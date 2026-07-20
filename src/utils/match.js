@@ -218,7 +218,7 @@ export function scorePerson(person, analysis, contentHits, contentList, reviewsF
       person.role,
       person.domains.join(" "),
       person.selfPortrait,
-      reviewsForPersonFn(person.id).map((item) => item.text).join(" "),
+      reviewsForPersonFn(person.id).map((item) => item.tag || item.text).join(" "),
       personContent.map((item) => `${item.title} ${item.summary}`).join(" "),
     ].join(" ")
   );

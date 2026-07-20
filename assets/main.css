@@ -994,6 +994,30 @@ body.is-login-view .main-panel {
   margin-top: 6px;
 }
 
+.portrait-tag-cloud {
+  position: relative;
+  width: 100%;
+}
+
+.portrait-tag-bubble {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 6px;
+  overflow-wrap: anywhere;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bubble-background);
+  color: var(--bubble-text);
+  font-size: var(--bubble-font-size, 10px);
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+
+
 .related-list button {
   padding: 0;
   border: 0;
@@ -1519,6 +1543,30 @@ select:focus,
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--frame-gap);
+}
+
+.profile-portrait-split-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.profile-portrait-split-grid .profile-block {
+  align-self: start;
+}
+
+.peer-portrait-block {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  padding: 12px;
+}
+
+.peer-portrait-block h2 {
+  margin: 0;
+}
+
+.self-portrait-block {
+  min-height: 350px;
 }
 
 /* Content mini cards: full-width long cards */

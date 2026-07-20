@@ -40,16 +40,39 @@ export const useReviewsStore = defineStore("reviews", {
         .filter((item) => item.personId === personId)
         .sort((left, right) => String(right.date).localeCompare(String(left.date)));
     },
+    tagFor(review) {
+      return String(review.tag || review.text || "").trim();
+    },
+    tagsForPerson(personId) {
+      const tags = new Map();
+      this.reviewsForPerson(personId).forEach((review) => {
+        const tag = this.tagFor(review);
+        if (!tag) return;
+        const entry = tags.get(tag) || { tag, reviewers: new Set(), latestDate: review.date };
+        entry.reviewers.add(review.reviewer);
+        if (String(review.date) > String(entry.latestDate)) entry.latestDate = review.date;
+        tags.set(tag, entry);
+      });
+      return [...tags.values()]
+        .map((entry) => ({ tag: entry.tag, count: entry.reviewers.size, latestDate: entry.latestDate }))
+        .sort((left, right) => right.count - left.count || String(right.latestDate).localeCompare(String(left.latestDate)));
+    },
     async saveReview(payload) {
       if (payload.personId === currentUserId) return { ok: false, message: "不能为自己补充他画像" };
-      if (!payload.text?.trim()) return { ok: false, message: "请填写评价内容" };
+      const tag = String(payload.tag || payload.text || "").trim();
+      if (!tag) return { ok: false, message: "请选择或填写事项" };
       const auth = useAuthStore();
+      const existing = this.reviews.find((item) =>
+        item.personId === payload.personId &&
+        item.reviewer === auth.displayName &&
+        this.tagFor(item) === tag
+      );
       const record = {
-        id: payload.id || `review-${Date.now()}`,
+        id: payload.id || existing?.id || `review-${Date.now()}`,
         personId: payload.personId,
         reviewer: auth.displayName,
         date: payload.date || getTodayText(),
-        text: payload.text.trim(),
+        tag,
       };
       const saved = isServerMode() ? await createServerReview(record) : record;
       this.reviews = [saved || record, ...this.reviews.filter((item) => item.id !== record.id)];

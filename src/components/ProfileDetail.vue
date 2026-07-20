@@ -25,19 +25,14 @@
       </section>
 
       <!-- 自画像 + 他画像 -->
-      <div class="portrait-split-grid">
-        <section class="profile-block">
+      <div class="portrait-split-grid profile-portrait-split-grid">
+        <section ref="selfPortraitRef" class="profile-block self-portrait-block">
           <h2>自画像</h2>
           <p>{{ person.selfPortrait }}</p>
         </section>
-        <section class="profile-block">
+        <section class="profile-block peer-portrait-block" :style="{ height: `${peerPortraitHeight}px` }">
           <h2>他画像</h2>
-          <ul v-if="sortedReviews.length" class="peer-review-list">
-            <li v-for="review in sortedReviews" :key="review.id">
-              {{ review.text }}（{{ review.reviewer }} · {{ review.date }}）
-            </li>
-          </ul>
-          <div v-else class="empty-state">暂无评价。</div>
+          <PeerReviewList :reviews="sortedReviews" :available-height="peerCloudHeight" />
         </section>
       </div>
 
@@ -68,7 +63,8 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import PeerReviewList from "./profile/PeerReviewList.vue";
 
 const props = defineProps({
   /** 人员对象 */
@@ -80,16 +76,29 @@ const props = defineProps({
 });
 defineEmits(['back', 'content']);
 
+const selfPortraitRef = ref(null);
+const peerPortraitHeight = ref(350);
+let selfPortraitObserver;
+const peerCloudHeight = computed(() => Math.max(54, peerPortraitHeight.value - 56));
+
+onMounted(() => {
+  selfPortraitObserver = new ResizeObserver(() => {
+    peerPortraitHeight.value = Math.max(350, Math.ceil(selfPortraitRef.value?.getBoundingClientRect().height || 0));
+  });
+  if (selfPortraitRef.value) selfPortraitObserver.observe(selfPortraitRef.value);
+});
+
+onBeforeUnmount(() => selfPortraitObserver?.disconnect());
+
 /** 部门路径文本 */
 const departmentText = computed(() =>
   props.person.departmentPath?.join(' / ') || props.person.department
 );
 
-/** 他画像按时间倒序，最多 5 条 */
+/** 他画像按时间倒序传入，由气泡组件按事项聚合。 */
 const sortedReviews = computed(() =>
   props.reviews
     .slice()
     .sort((left, right) => String(right.date).localeCompare(String(left.date)))
-    .slice(0, 5)
 );
 </script>

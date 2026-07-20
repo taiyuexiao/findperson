@@ -10,14 +10,14 @@
         </template>
       </ProfileSummary>
 
-      <div class="portrait-split-grid">
-        <section class="profile-block">
+      <div class="portrait-split-grid profile-portrait-split-grid">
+        <section ref="selfPortraitRef" class="profile-block self-portrait-block">
           <h2>自画像</h2>
           <p>{{ profile.selfPortrait }}</p>
         </section>
-        <section class="profile-block">
+        <section class="profile-block peer-portrait-block" :style="{ height: `${peerPortraitHeight}px` }">
           <h2>他画像</h2>
-          <PeerReviewList :reviews="myPeerReviews" empty-text="暂时还没有收到他画像评价。" />
+          <PeerReviewList :reviews="myPeerReviews" :available-height="peerCloudHeight" empty-text="暂时还没有收到他画像评价。" />
         </section>
       </div>
 
@@ -56,7 +56,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Search } from "@element-plus/icons-vue";
 import PeerReviewList from "../components/profile/PeerReviewList.vue";
@@ -79,7 +79,29 @@ const keyword = ref("");
 const status = ref("");
 const form = reactive({ name: "", department: "", role: "", contact: "", domainsText: "", selfPortrait: "" });
 const profile = computed(() => directory.currentUser);
-const myPeerReviews = computed(() => reviews.reviewsForPerson(currentUserId).slice(0, 5));
+const myPeerReviews = computed(() => reviews.reviewsForPerson(currentUserId));
+const selfPortraitRef = ref(null);
+const peerPortraitHeight = ref(350);
+let selfPortraitObserver;
+const peerCloudHeight = computed(() => Math.max(54, peerPortraitHeight.value - 56));
+
+function observeSelfPortrait() {
+  selfPortraitObserver?.disconnect();
+  if (!selfPortraitRef.value) return;
+  selfPortraitObserver = new ResizeObserver(() => {
+    peerPortraitHeight.value = Math.max(350, Math.ceil(selfPortraitRef.value?.getBoundingClientRect().height || 0));
+  });
+  selfPortraitObserver.observe(selfPortraitRef.value);
+}
+
+onMounted(observeSelfPortrait);
+onBeforeUnmount(() => selfPortraitObserver?.disconnect());
+watch(isEditing, async (editing) => {
+  if (!editing) {
+    await nextTick();
+    observeSelfPortrait();
+  }
+});
 
 function startEdit() {
   Object.assign(form, {

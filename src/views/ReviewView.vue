@@ -6,22 +6,32 @@
     </div>
     <el-form class="form-grid" :model="form" @submit.prevent>
       <label>
-        评价对象
+        同事
         <el-select v-model="form.personId">
           <el-option v-for="person in reviewablePeople" :key="person.id" :label="person.name" :value="person.id" />
         </el-select>
       </label>
-      <label>评价日期<el-input v-model="form.date" type="date" /></label>
-      <label class="wide">他画像评价<el-input v-model="form.text" type="textarea" :rows="5" /></label>
+      <label>日期<el-input v-model="form.date" type="date" /></label>
+      <label class="wide">
+        事项
+        <el-select v-model="form.tag" filterable placeholder="搜索或选择事项">
+          <el-option v-for="item in personTags" :key="item.tag" :label="item.tag" :value="item.tag" />
+          <el-option label="其他" :value="OTHER_TAG" />
+        </el-select>
+      </label>
+      <label v-if="form.tag === OTHER_TAG" class="wide">
+        填写事项
+        <el-input v-model="form.customTag" maxlength="20" show-word-limit placeholder="请输入事项" />
+      </label>
       <div class="form-actions wide">
-        <el-button class="primary-button" type="primary" @click="saveReview">提交评价</el-button>
+        <el-button class="primary-button" type="primary" @click="saveReview">添加事项</el-button>
         <el-button class="secondary-button" @click="router.push({ name: 'mine' })">取消</el-button>
         <span role="status">{{ status }}</span>
       </div>
     </el-form>
     <div class="profile-detail review-history-panel">
       <section>
-        <h2>已发出的评价</h2>
+        <h2>我添加的事项</h2>
         <SentReviewList :reviews="reviews.sentReviews" :people="directory.people" @continue="continueReview" @delete="reviews.deleteReview" />
       </section>
     </div>
@@ -29,7 +39,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { currentUserId, getTodayText } from "../state.js";
 import SentReviewList from "../components/profile/SentReviewList.vue";
@@ -40,15 +50,30 @@ const router = useRouter();
 const directory = useDirectoryStore();
 const reviews = useReviewsStore();
 const reviewablePeople = computed(() => directory.people.filter((person) => person.id !== currentUserId));
-const form = reactive({ personId: reviewablePeople.value[0]?.id || "", date: getTodayText(), text: "", id: "" });
+const OTHER_TAG = "__other__";
+const form = reactive({ personId: reviewablePeople.value[0]?.id || "", date: getTodayText(), tag: "", customTag: "", id: "" });
 const status = ref("");
+const personTags = computed(() => {
+  const person = directory.getPerson(form.personId);
+  const selfTags = (person?.domains || []).map((tag) => ({ tag }));
+  const existingTags = reviews.tagsForPerson(form.personId)
+    .filter((item) => !selfTags.some((selfTag) => selfTag.tag === item.tag));
+  return [...selfTags, ...existingTags];
+});
+
+watch(() => form.personId, () => {
+  form.tag = "";
+  form.customTag = "";
+});
 
 async function saveReview() {
-  const result = await reviews.saveReview(form);
-  status.value = result.ok ? "评价已保存" : result.message;
+  const tag = form.tag === OTHER_TAG ? form.customTag : form.tag;
+  const result = await reviews.saveReview({ ...form, tag });
+  status.value = result.ok ? "事项已添加" : result.message;
   if (result.ok) {
     form.id = "";
-    form.text = "";
+    form.tag = "";
+    form.customTag = "";
     form.date = getTodayText();
   }
 }
@@ -58,7 +83,8 @@ function continueReview(review) {
     id: review.id,
     personId: review.personId,
     date: review.date,
-    text: review.text,
+    tag: reviews.tagFor(review),
+    customTag: "",
   });
   status.value = "";
 }
