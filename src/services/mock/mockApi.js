@@ -1,6 +1,9 @@
 import {
   createSession,
   currentUserId,
+  getActiveUserId,
+  seedDepartments,
+  seedRoles,
   getTodayText,
   loadJson,
   manualSections,
@@ -47,14 +50,62 @@ function seedReviews() {
 }
 
 export function getMockPeople() {
-  const profile = loadJson(STORAGE_KEYS.profile, null);
-  return clone(seedPeople.map((person) =>
-    normalizePersonRecord(person.id === currentUserId && profile ? { ...person, ...profile } : person)
-  ));
+  const profiles = loadJson(STORAGE_KEYS.profile, {});
+  const savedPeople = loadJson(STORAGE_KEYS.people, []);
+  const needsCoordinationMigration = loadJson(STORAGE_KEYS.organizationSchemaVersion, "") !== "20260723-collaboration-v3";
+  if (needsCoordinationMigration) saveJson(STORAGE_KEYS.organizationSchemaVersion, "20260723-collaboration-v3");
+  return clone(seedPeople.map((person) => {
+    const saved = savedPeople.find((item) => item.id === person.id);
+    const savedProfile = profiles?.[getActiveUserId()] || (profiles?.id ? profiles : null);
+    const ownProfile = person.id === getActiveUserId() ? savedProfile : null;
+    const record = { ...person, ...saved, ...ownProfile };
+    if (needsCoordinationMigration && person.id === "p-lin") {
+      Object.assign(record, { department: "协同服务处", role: "协同服务处负责人", departmentPath: ["上海银行", "综合管理部", "协同服务处"] });
+    }
+    if (needsCoordinationMigration && person.id === "p-tang") {
+      Object.assign(record, { department: "综合管理部", role: "综合管理部负责人", departmentPath: ["上海银行", "综合管理部"] });
+    }
+    return normalizePersonRecord(record);
+  }));
+}
+
+export function saveMockPeople(people) {
+  saveJson(STORAGE_KEYS.people, people);
+  return clone(people);
+}
+
+export function getMockDepartments() {
+  const saved = loadJson(STORAGE_KEYS.departments, []);
+  if (!saved.length) return clone(seedDepartments);
+  const seedById = new Map(seedDepartments.map((item) => [item.id, item]));
+  const migrated = saved.map((item) => {
+    const seed = seedById.get(item.id);
+    return { ...seed, ...item, leaderId: item.leaderId || seed?.leaderId || "" };
+  });
+  const savedIds = new Set(saved.map((item) => item.id));
+  return clone([...seedDepartments.filter((item) => !savedIds.has(item.id)), ...migrated]);
+}
+
+export function saveMockDepartments(departments) {
+  saveJson(STORAGE_KEYS.departments, departments);
+  return clone(departments);
+}
+
+export function getMockRoles() {
+  return clone(loadJson(STORAGE_KEYS.roles, seedRoles));
+}
+
+export function saveMockRoles(roles) {
+  saveJson(STORAGE_KEYS.roles, roles);
+  return clone(roles);
 }
 
 export function getMockContent() {
-  return clone(loadJson(STORAGE_KEYS.content, seedContent).map(normalizeContentRecord));
+  const stored = loadJson(STORAGE_KEYS.content, null);
+  const contents = stored || seedContent;
+  // Existing demo data is extended with newly introduced pending-review examples.
+  const pendingExamples = seedContent.filter((item) => item.status === "待审核" && !contents.some((saved) => saved.id === item.id));
+  return clone(contents.concat(pendingExamples).map(normalizeContentRecord));
 }
 
 export function getMockManualSections() {
@@ -72,7 +123,8 @@ export function getMockSessions() {
 }
 
 export function saveMockProfile(profile) {
-  saveJson(STORAGE_KEYS.profile, profile);
+  const profiles = loadJson(STORAGE_KEYS.profile, {});
+  saveJson(STORAGE_KEYS.profile, { ...(profiles?.id ? {} : profiles), [profile.id]: profile });
   return clone(profile);
 }
 
@@ -95,7 +147,7 @@ export function createMockContent(payload) {
   const contents = getMockContent();
   const record = normalizeContentRecord({
     id: payload.id || `c-${Date.now()}`,
-    ownerId: currentUserId,
+    ownerId: getActiveUserId(),
     title: payload.title,
     tags: splitTags(payload.tagsText ?? payload.tags),
     summary: payload.summary,

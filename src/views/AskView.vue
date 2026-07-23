@@ -85,7 +85,7 @@
         :people="directory.people"
         :content="content.contents"
         :feedback="feedback.feedbackMap"
-        :current-user-id="currentUserId"
+        :current-user-id="auth.userId"
         @close="agui.closeDetailSidebar"
         @profile="openProfile"
         @content="openContentDetail"
@@ -110,14 +110,15 @@ import DetailSidebar from "../components/ask/DetailSidebar.vue";
 import RecommendationCardGroup from "../components/ask/RecommendationCardGroup.vue";
 import ThreadList from "../components/ask/ThreadList.vue";
 import ThreadTurn from "../components/ask/ThreadTurn.vue";
-import { currentUserId } from "../state.js";
 import { useAguiStore } from "../stores/agui.js";
+import { useAuthStore } from "../stores/auth.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import { useFeedbackStore } from "../stores/feedback.js";
 import { useSessionsStore } from "../stores/sessions.js";
 
 const router = useRouter();
+const auth = useAuthStore();
 const sessions = useSessionsStore();
 const agui = useAguiStore();
 const directory = useDirectoryStore();

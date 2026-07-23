@@ -2,13 +2,36 @@
   <section class="view active">
     <div class="page-heading"><div><h1>个人中心</h1></div></div>
     <div v-if="!isEditing" class="profile-detail">
-      <ProfileSummary :person="profile">
+      <ProfileSummary :person="profile" :supervisor="supervisor" @supervisor="openSupervisor">
         <template #actions>
-          <el-button class="secondary-button small-button" @click="startEdit">编辑</el-button>
           <el-button class="secondary-button small-button" @click="router.push({ name: 'review' })">为他人画像</el-button>
-          <el-button class="primary-button small-button" type="primary" @click="router.push({ name: 'publish' })">发布</el-button>
+          <el-button class="primary-button small-button" type="primary" :icon="EditPen" @click="router.push({ name: 'publish' })">发布</el-button>
+          <el-button class="secondary-button small-button" @click="startEdit">编辑</el-button>
         </template>
       </ProfileSummary>
+
+      <section v-if="department" class="profile-block department-responsibility-block">
+        <div class="content-section-head"><div><h2>部门职责</h2><p class="person-meta">{{ canManageResponsibilities ? '负责部门及下级部门职责' : department.name }}</p></div></div>
+        <div v-if="canManageResponsibilities" class="responsibility-manager">
+          <div class="responsibility-filter-row">
+            <el-select v-model="responsibilityFilter" class="responsibility-filter" clearable placeholder="筛选部门">
+              <el-option label="全部负责部门" value="" />
+              <el-option v-for="item in responsibilityOptions" :key="item.id" :label="item.path.join(' / ')" :value="item.id" />
+            </el-select>
+          </div>
+          <div class="responsibility-list">
+            <article v-for="item in visibleResponsibilities" :key="item.id" class="responsibility-item">
+              <div class="responsibility-item-head"><div><h3>{{ item.name }}</h3><p>{{ item.path.join(' / ') }}</p></div><el-button class="secondary-button small-button" @click="startResponsibilityEdit(item)">{{ editingResponsibilityId === item.id ? '取消' : '编辑' }}</el-button></div>
+              <template v-if="editingResponsibilityId === item.id">
+                <el-input v-model="responsibilityDrafts[item.id]" type="textarea" :rows="3" placeholder="请输入部门职责" />
+                <div class="responsibility-item-actions"><el-button class="primary-button small-button" type="primary" @click="saveResponsibility(item)">保存职责</el-button></div>
+              </template>
+              <p v-else class="responsibility-copy">{{ item.responsibility || '暂未维护部门职责。' }}</p>
+            </article>
+          </div>
+        </div>
+        <p v-else>{{ department.responsibility || '暂未维护部门职责。' }}</p>
+      </section>
 
       <div class="portrait-split-grid profile-portrait-split-grid">
         <section class="profile-block self-portrait-block">
@@ -35,6 +58,7 @@
             <div class="content-mini-head">
               <h3>{{ item.title }}</h3>
               <span v-if="item.pinned" class="pin-badge">置顶</span>
+              <span class="status-chip" :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
             <p>{{ item.summary }}</p>
             <div class="field-row">
@@ -51,18 +75,18 @@
       </section>
     </div>
 
-    <ProfileEditor v-else :form="form" :status="status" @cancel="isEditing = false" @save="saveProfile" />
+    <ProfileEditor v-else :form="form" :person="profile" :department="department" :status="status" @cancel="isEditing = false" @save="saveProfile" />
   </section>
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Search } from "@element-plus/icons-vue";
+import { EditPen, Search } from "@element-plus/icons-vue";
 import PeerReviewList from "../components/profile/PeerReviewList.vue";
 import ProfileEditor from "../components/profile/ProfileEditor.vue";
 import ProfileSummary from "../components/profile/ProfileSummary.vue";
-import { currentUserId } from "../state.js";
+import { getActiveUserId } from "../state.js";
 import { useAuthStore } from "../stores/auth.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
@@ -77,14 +101,25 @@ const isEditing = ref(false);
 const isSearchOpen = ref(false);
 const keyword = ref("");
 const status = ref("");
-const form = reactive({ name: "", department: "", role: "", contact: "", domainsText: "", selfPortrait: "" });
+const form = reactive({ contact: "", domainsText: "", selfPortrait: "" });
 const profile = computed(() => directory.currentUser);
-const myPeerReviews = computed(() => reviews.reviewsForPerson(currentUserId));
+const supervisor = computed(() => directory.getPersonSupervisor(profile.value?.id));
+const department = computed(() => directory.getDepartment(profile.value?.department));
+const managedRoots = computed(() => directory.managedDepartments(auth.userId));
+const canManageResponsibilities = computed(() => managedRoots.value.length > 0);
+const responsibilityFilter = ref("");
+const responsibilityDrafts = reactive({});
+const responsibilityOptions = computed(() => directory.manageableDepartments(auth.userId));
+const visibleResponsibilities = computed(() => responsibilityFilter.value
+  ? responsibilityOptions.value.filter((item) => item.id === responsibilityFilter.value)
+  : responsibilityOptions.value);
+const editingResponsibilityId = ref("");
+const myPeerReviews = computed(() => reviews.reviewsForPerson(getActiveUserId()));
+watch(visibleResponsibilities, (items) => items.forEach((item) => {
+  if (responsibilityDrafts[item.id] === undefined) responsibilityDrafts[item.id] = item.responsibility || "";
+}), { immediate: true });
 function startEdit() {
   Object.assign(form, {
-    name: profile.value.name,
-    department: profile.value.department,
-    role: profile.value.role,
     contact: profile.value.contact,
     domainsText: profile.value.domains.join("、"),
     selfPortrait: profile.value.selfPortrait,
@@ -99,13 +134,35 @@ function saveProfile() {
   isEditing.value = false;
 }
 
+function saveResponsibility(item) {
+  directory.updateDepartment(item.id, { responsibility: (responsibilityDrafts[item.id] || "").trim() });
+  editingResponsibilityId.value = "";
+}
+
+function startResponsibilityEdit(item) {
+  if (editingResponsibilityId.value === item.id) {
+    editingResponsibilityId.value = "";
+    return;
+  }
+  responsibilityDrafts[item.id] = item.responsibility || "";
+  editingResponsibilityId.value = item.id;
+}
+
 function toggleSearch() {
   isSearchOpen.value = !isSearchOpen.value;
   if (!isSearchOpen.value) keyword.value = "";
 }
 
+function statusClass(status) {
+  return status === "已发布" ? "status-published" : status === "待审核" ? "status-pending" : status === "草稿" ? "status-draft" : "status-rejected";
+}
+
 function openContent(id) {
   router.push({ name: "contentDetail", params: { id }, query: { from: "mine" } });
+}
+
+function openSupervisor(id) {
+  router.push({ name: "profile", params: { id }, query: { from: "mine" } });
 }
 
 async function deleteContent(id) {

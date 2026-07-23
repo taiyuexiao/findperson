@@ -20,6 +20,9 @@ export const useAuthStore = defineStore("auth", {
     displayName() {
       return this.user?.name || this.name || "用户";
     },
+    isAdmin() {
+      return this.user?.systemRole === "管理员";
+    },
   },
   actions: {
     persist() {
@@ -37,6 +40,7 @@ export const useAuthStore = defineStore("auth", {
         this.userId = user.id;
         this.name = user.name;
         this.isLoggedIn = true;
+        useDirectoryStore().setCurrentUser(user.id);
         this.persist();
       }
       return user;
@@ -48,21 +52,28 @@ export const useAuthStore = defineStore("auth", {
         this.isLoggedIn = true;
         this.userId = result?.user?.id || currentUserId;
         this.name = result?.user?.name || this.displayName;
+        useDirectoryStore().setCurrentUser(this.userId);
         this.persist();
         return { ok: true };
       }
       const key = normalize(account);
-      const ok = ["linzhixia", "林知夏", "13800001206"].includes(key) && password === this.password;
-      if (!ok) return { ok: false, message: "账号或密码不正确" };
+      const demoAccounts = {
+        linzhixia: currentUserId, "林知夏": currentUserId, "13800001206": currentUserId,
+        wangke: "p-clerk-1", "王珂": "p-clerk-1", "13800001301": "p-clerk-1",
+      };
+      const userId = demoAccounts[key];
+      if (!userId || password !== this.password) return { ok: false, message: "账号或密码不正确" };
       this.isLoggedIn = true;
-      this.userId = currentUserId;
-      this.name = this.displayName;
+      this.userId = userId;
+      this.name = useDirectoryStore().getPerson(userId)?.name || "用户";
+      useDirectoryStore().setCurrentUser(userId);
       this.persist();
       return { ok: true };
     },
     async logout() {
       if (isServerMode()) await serverLogout().catch(console.warn);
       this.isLoggedIn = false;
+      useDirectoryStore().setCurrentUser(currentUserId);
       localStorage.removeItem("firstResponsibilityDemo.token");
       this.persist();
     },
@@ -75,7 +86,11 @@ export const useAuthStore = defineStore("auth", {
       return "";
     },
     updateProfile(patch) {
-      const person = useDirectoryStore().updatePerson(this.userId, patch);
+      const person = useDirectoryStore().updatePerson(this.userId, {
+        contact: patch.contact,
+        domainsText: patch.domainsText,
+        selfPortrait: patch.selfPortrait,
+      });
       if (person) {
         this.name = person.name;
         this.persist();

@@ -6,13 +6,15 @@
         <el-icon><Search /></el-icon>
         <el-input v-model="directory.keyword" placeholder="搜索关键词、人员、职责" clearable />
       </div>
-      <DepartmentFilter
-        :filters="directory.filters"
-        :level1-options="directory.level1Options"
-        :level2-options="directory.level2Options"
-        :level3-options="directory.level3Options"
-        @change="handleDepartmentChange"
-      />
+      <el-popover placement="bottom-end" :width="360" trigger="click" popper-class="directory-filter-popper">
+        <template #reference><el-button class="secondary-button filter-trigger" circle aria-label="打开部门筛选" title="部门筛选"><el-icon><Filter /></el-icon></el-button></template>
+        <section class="directory-filter-panel">
+          <div class="directory-filter-head"><div><strong>部门筛选</strong><p>点击部门查看该部门及下级成员</p></div></div>
+          <button class="filter-all-node" :class="{ active: !directory.selectedDepartmentId }" type="button" @click="resetFilters">全部部门</button>
+          <el-tree :data="directory.departmentTree" node-key="id" :props="treeProps" :current-node-key="directory.selectedDepartmentId" highlight-current :expand-on-click-node="false" @node-click="selectDepartment" />
+          <div class="directory-filter-footer"><el-tooltip content="重置筛选" placement="top"><el-button class="filter-reset-button" circle aria-label="重置筛选" @click="resetFilters"><el-icon><RefreshRight /></el-icon></el-button></el-tooltip></div>
+        </section>
+      </el-popover>
     </div>
     <div class="card-grid">
       <PersonCard v-for="person in directory.filteredPeople" :key="person.id" :person="person" @open="openProfile" />
@@ -22,21 +24,25 @@
 </template>
 
 <script setup>
-import { Search } from "@element-plus/icons-vue";
+import { Filter, RefreshRight, Search } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
-import DepartmentFilter from "../components/directory/DepartmentFilter.vue";
 import PersonCard from "../components/directory/PersonCard.vue";
 import { useDirectoryStore } from "../stores/directory.js";
 
 const router = useRouter();
 const directory = useDirectoryStore();
+const treeProps = { label: "name", children: "children" };
 
 function openProfile(id) {
   router.push({ name: "profile", params: { id }, query: { from: "directory" } });
 }
 
-function handleDepartmentChange(key) {
-  if (key === "level1") directory.resetDepartmentLevel(1);
-  if (key === "level2") directory.resetDepartmentLevel(2);
+function selectDepartment(department) {
+  directory.setDepartmentFilterFromNode(department);
+}
+
+function resetFilters() {
+  directory.keyword = "";
+  directory.resetDepartmentFilters();
 }
 </script>

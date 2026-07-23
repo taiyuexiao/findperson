@@ -41,7 +41,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { currentUserId, getTodayText } from "../state.js";
+import { getActiveUserId, getTodayText } from "../state.js";
 import SentReviewList from "../components/profile/SentReviewList.vue";
 import { useDirectoryStore } from "../stores/directory.js";
 import { useReviewsStore } from "../stores/reviews.js";
@@ -49,7 +49,7 @@ import { useReviewsStore } from "../stores/reviews.js";
 const router = useRouter();
 const directory = useDirectoryStore();
 const reviews = useReviewsStore();
-const reviewablePeople = computed(() => directory.people.filter((person) => person.id !== currentUserId));
+const reviewablePeople = computed(() => directory.people.filter((person) => person.id !== getActiveUserId()));
 const OTHER_TAG = "__other__";
 const form = reactive({ personId: reviewablePeople.value[0]?.id || "", date: getTodayText(), tag: "", customTag: "", id: "" });
 const status = ref("");

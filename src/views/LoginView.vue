@@ -26,7 +26,8 @@
           </div>
         </el-form>
         <div class="login-tips">
-          <span>演示账号：林知夏 / 13800001206</span>
+          <span>管理员：林知夏 / 13800001206</span>
+          <span>普通成员：王珂 / 13800001301</span>
           <span>演示密码：123456</span>
         </div>
       </div>

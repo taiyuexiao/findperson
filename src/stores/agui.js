@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ElMessage } from "element-plus";
-import { currentUserId, loadJson, normalizeContentRecord, saveJson, STORAGE_KEYS } from "../state.js";
+import { loadJson, normalizeContentRecord, saveJson, STORAGE_KEYS } from "../state.js";
 import { connectAguiStream } from "../services/agui/transport.js";
 import { createMockAguiStream } from "../services/agui/mockStream.js";
 import { reportInteractionEvent } from "../services/agui/reporter.js";
@@ -90,7 +90,7 @@ export const useAguiStore = defineStore("agui", {
             people: directory.people,
             content: content.contents,
             reviewsForPerson: (personId) => reviews.reviewsForPerson(personId),
-            currentUserId,
+            currentUserId: auth.userId,
             authName: auth.displayName,
           });
       try {

@@ -10,6 +10,8 @@
       <span class="chain-item">{{ departmentText }}</span>
       <span class="chain-dot"></span>
       <span class="chain-item">{{ person.role }}</span>
+      <button v-if="supervisor" class="supervisor-tag" type="button" @click="$emit('supervisor', supervisor.person.id)">上级：{{ supervisorText }}</button>
+      <span v-else class="supervisor-tag">上级：{{ supervisorText }}</span>
     </div>
     <p class="person-meta">联系方式：{{ person.contact }}</p>
     <div class="field-row">
@@ -21,6 +23,11 @@
 <script setup>
 import { computed } from "vue";
 
-const props = defineProps({ person: { type: Object, required: true } });
+const props = defineProps({ person: { type: Object, required: true }, supervisor: { type: Object, default: null } });
+defineEmits(["supervisor"]);
 const departmentText = computed(() => props.person.departmentPath?.join(" / ") || props.person.department);
+const supervisorText = computed(() => props.supervisor
+  ? `${props.supervisor.department.name} · ${props.supervisor.person.name}`
+  : "暂未设置"
+);
 </script>

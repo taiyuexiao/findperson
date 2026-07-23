@@ -53,13 +53,13 @@ onMounted(() => {
   }
 });
 
-async function saveContent() {
-  if (!form.title.trim() || !form.summary.trim() || !form.body.trim()) {
+async function saveContent(mode = "submit") {
+  if (!form.title.trim() || (mode === "submit" && (!form.summary.trim() || !form.body.trim()))) {
     status.value = "请补齐标题、摘要和正文";
     return;
   }
-  const record = await content.saveContent(form);
-  status.value = form.editingId ? "内容已保存" : "内容已发布";
+  const record = await content.saveContent(form, mode);
+  status.value = mode === "draft" ? "草稿已保存" : (form.editingId ? "修改已提交审核" : "内容已提交审核");
   form.editingId = record.id;
 }
 

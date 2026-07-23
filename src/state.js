@@ -8,6 +8,9 @@
 
 // ── localStorage 键名 ──────────────────────────────────────────────────────
 export const STORAGE_KEYS = {
+  people: "firstResponsibilityDemo.people",
+  departments: "firstResponsibilityDemo.departments",
+  roles: "firstResponsibilityDemo.roles",
   profile: "firstResponsibilityDemo.profile",
   content: "firstResponsibilityDemo.content",
   peerReviews: "firstResponsibilityDemo.peerReviews",
@@ -17,6 +20,7 @@ export const STORAGE_KEYS = {
   interactions: "firstResponsibilityDemo.interactions",
   auth: "firstResponsibilityDemo.auth",
   feedback: "firstResponsibilityDemo.feedback",
+  organizationSchemaVersion: "firstResponsibilityDemo.organizationSchemaVersion",
 };
 
 // ── 种子人员 ───────────────────────────────────────────────────────────────
@@ -47,11 +51,11 @@ export const seedPeople = [
     completeness: 88,
   },
   {
-    id: "p-tang", name: "唐沐", department: "流程管理室", role: "流程审批负责人",
+    id: "p-tang", name: "唐沐", department: "综合管理部", role: "综合管理部负责人",
     contact: "13800001204",
     domains: ["流程审批", "制度规范", "事项流转", "责任边界"],
-    selfPortrait: "我维护跨部门流程审批规则、事项流转路径和首问责任边界说明。",
-    peerPortrait: "适合咨询流程卡点、责任归属、审批路径和制度解释类问题。",
+    selfPortrait: "我负责综合管理部的协同服务、流程运营和资源统筹，推进下级部门明确首问责任边界。",
+    peerPortrait: "擅长统筹跨部门事项、流程协同和服务机制建设。",
     completeness: 90,
   },
   {
@@ -63,10 +67,10 @@ export const seedPeople = [
     completeness: 86,
   },
   {
-    id: "p-lin", name: "林知夏", department: "综合协同办公室", role: "平台用户",
+    id: "p-lin", name: "林知夏", department: "协同服务处", role: "协同服务处负责人",
     contact: "13800001206",
     domains: ["首问责任", "协同流转", "问题分派"],
-    selfPortrait: "我负责首问责任制平台日常使用反馈、问题流转记录和跨部门协同跟进。",
+    selfPortrait: "我负责协同服务处的首问受理、事项流转和服务体验统筹，并推动下级部门持续完善服务职责。",
     peerPortrait: "熟悉业务咨询入口和首问流转过程，适合反馈平台体验和协同效率问题。",
     completeness: 82,
   },
@@ -120,22 +124,136 @@ export const seedPeople = [
   },
 ];
 
-// ── 部门层级映射 ───────────────────────────────────────────────────────────
-// 三级部门 → [一级部门, 二级部门, 三级部门]
-export const departmentHierarchyMap = {
-  数字能力中心: ["数字化建设部", "智能能力处", "数字能力中心"],
-  数据治理科: ["数字化建设部", "数据治理处", "数据治理科"],
-  应用运维科: ["数字化建设部", "平台运维处", "应用运维科"],
-  流程管理室: ["综合管理部", "流程运营处", "流程管理室"],
-  内容运营组: ["综合管理部", "知识运营处", "内容运营组"],
-  综合协同办公室: ["综合管理部", "协同服务处", "综合协同办公室"],
-  安全合规科: ["风险管理部", "安全治理处", "安全合规科"],
-  政策研究室: ["业务管理部", "政策研究处", "政策研究室"],
-  财务资产科: ["综合管理部", "财务保障处", "财务资产科"],
-  人事培训组: ["综合管理部", "组织人事处", "人事培训组"],
-  质量监督办: ["服务管理部", "服务督导处", "质量监督办"],
-  培训推广组: ["服务管理部", "宣贯推广处", "培训推广组"],
+// 演示组织规模：10 位负责人 + 50 位成员。负责人职务独立于负责人身份。
+seedPeople.splice(10);
+seedPeople[0].department = "数字化建设部";
+seedPeople[0].role = "部门经理";
+const clerkNames = [
+  "王珂", "赵敏", "周航", "吴菲", "郑然", "冯昕", "褚然", "卫澜", "沈言", "韩月",
+  "杨帆", "朱宁", "秦川", "尤佳", "许墨", "何川", "吕晴", "施晨", "张悦", "孔维",
+  "曹宇", "严清", "华宁", "金晨", "魏安", "陶然", "姜雪", "戚可", "谢宁", "邹远",
+  "喻航", "柏然", "水清", "窦宁", "章悦", "云帆", "苏杭", "潘宁", "葛星", "奚晨",
+  "范可", "彭程", "郎宁", "鲁明", "昌宇", "马欣", "苗宁", "凤扬", "花语", "方正",
+];
+seedPeople.push(...clerkNames.map((name, index) => {
+  const departmentHead = seedPeople[index % 10];
+  return {
+    id: `p-clerk-${index + 1}`,
+    name,
+    department: departmentHead.department,
+    role: "专员",
+    contact: `1380000${String(1301 + index).padStart(4, "0")}`,
+    domains: departmentHead.domains.slice(0, 2),
+    selfPortrait: `协助处理${departmentHead.department}相关的日常咨询、事项流转和材料整理。`,
+    peerPortrait: "能够配合完成部门日常咨询和协同事项跟进。",
+    completeness: 72 + (index % 20),
+  };
+}));
+
+// 账号与组织数据分离：个人资料不再承担部门、岗位和系统角色的维护职责。
+const departmentLeads = {
+  数字化建设部: "p-chen", 数据治理科: "p-luo", 应用运维科: "p-song", 综合管理部: "p-tang",
+  内容运营组: "p-xu", 协同服务处: "p-lin", 安全合规科: "p-zhou", 政策研究室: "p-jiang",
+  财务资产科: "p-he", 人事培训组: "p-ye",
 };
+
+// ── 部门树 ───────────────────────────────────────────────────────────────
+// parentId 允许组织架构按实际情况无限向下扩展，path 仅用于展示和筛选。
+const departmentPaths = {
+  "上海银行": ["上海银行"],
+  "数字化建设部": ["上海银行", "数字化建设部"],
+  "智能能力处": ["上海银行", "数字化建设部", "智能能力处"],
+  "数字能力中心": ["上海银行", "数字化建设部", "智能能力处", "数字能力中心"],
+  "数据治理处": ["上海银行", "数字化建设部", "数据治理处"],
+  "数据治理科": ["上海银行", "数字化建设部", "数据治理处", "数据治理科"],
+  "平台运维处": ["上海银行", "数字化建设部", "平台运维处"],
+  "应用运维科": ["上海银行", "数字化建设部", "平台运维处", "应用运维科"],
+  "综合管理部": ["上海银行", "综合管理部"],
+  "流程运营处": ["上海银行", "综合管理部", "流程运营处"],
+  "流程管理室": ["上海银行", "综合管理部", "流程运营处", "流程管理室"],
+  "知识运营处": ["上海银行", "综合管理部", "知识运营处"],
+  "内容运营组": ["上海银行", "综合管理部", "知识运营处", "内容运营组"],
+  "协同服务处": ["上海银行", "综合管理部", "协同服务处"],
+  "综合协同办公室": ["上海银行", "综合管理部", "协同服务处", "综合协同办公室"],
+  "协同受理组": ["上海银行", "综合管理部", "协同服务处", "协同受理组"],
+  "事项流转组": ["上海银行", "综合管理部", "协同服务处", "事项流转组"],
+  "服务体验组": ["上海银行", "综合管理部", "协同服务处", "服务体验组"],
+  "知识支持组": ["上海银行", "综合管理部", "协同服务处", "知识支持组"],
+  "渠道运营组": ["上海银行", "综合管理部", "协同服务处", "渠道运营组"],
+  "财务保障处": ["上海银行", "综合管理部", "财务保障处"],
+  "财务资产科": ["上海银行", "综合管理部", "财务保障处", "财务资产科"],
+  "组织人事处": ["上海银行", "综合管理部", "组织人事处"],
+  "人事培训组": ["上海银行", "综合管理部", "组织人事处", "人事培训组"],
+  "风险管理部": ["上海银行", "风险管理部"],
+  "安全治理处": ["上海银行", "风险管理部", "安全治理处"],
+  "安全合规科": ["上海银行", "风险管理部", "安全治理处", "安全合规科"],
+  "业务管理部": ["上海银行", "业务管理部"],
+  "政策研究处": ["上海银行", "业务管理部", "政策研究处"],
+  "政策研究室": ["上海银行", "业务管理部", "政策研究处", "政策研究室"],
+};
+
+export const departmentHierarchyMap = departmentPaths;
+
+export const seedDepartments = Object.entries(departmentPaths).map(([name, path]) => {
+  const parentPath = path.slice(0, -1);
+  const parentName = parentPath.at(-1);
+  return {
+    id: `dept-${name}`,
+    name,
+    parentId: parentName ? `dept-${parentName}` : "",
+    path,
+    leaderId: departmentLeads[name] || "",
+    responsibility: `负责${name}相关事项的受理、协同与业务支撑，明确首问责任边界并持续维护服务指引。`,
+  };
+});
+
+const generatedLeaderNames = [
+  "沈嘉言", "顾南乔", "陆知衡", "许清和", "程予安", "苏明澈", "谢闻川", "顾念之", "江叙白", "温书言",
+  "秦知远", "周静宜", "林墨言", "宋清越", "叶承安", "方予宁", "陆行舟", "沈昭然", "许望舒", "顾行简",
+  "周亦安", "程书言", "林清越", "苏景行", "江知夏", "谢安然", "陆昭明", "温予安", "秦书衡", "宋知远",
+];
+const generatedMemberNames = [
+  "陈思远", "李若宁", "王书涵", "赵嘉禾", "吴明轩", "郑知意", "冯予安", "褚清言", "卫景然", "沈之遥",
+  "韩书宁", "杨知行", "朱予希", "秦乐言", "尤安然", "何清越", "吕明澈", "施念安", "张书怡", "孔景行",
+  "曹若溪", "严嘉言", "华清妍", "金予安", "魏昭然", "陶书言", "姜知远", "戚安宁", "谢明澈", "邹清和",
+];
+
+// 每个演示部门至少有一名负责人和一名成员，便于完整展示组织、上级和名片筛选。
+seedDepartments.forEach((department, index) => {
+  if (!department.leaderId) {
+    const leaderId = `p-dept-leader-${index + 1}`;
+    department.leaderId = leaderId;
+    seedPeople.push({
+      id: leaderId,
+      name: department.name === "上海银行" ? "董事长" : generatedLeaderNames[index],
+      department: department.name,
+      departmentPath: department.path.slice(),
+      role: department.name === "上海银行" ? "董事长" : "部门负责人",
+      contact: `1390000${String(2001 + index).padStart(4, "0")}`,
+      domains: [department.name, "首问责任", "协同管理"],
+      selfPortrait: `我负责${department.name}的团队管理、事项统筹和部门职责维护。`,
+      peerPortrait: `熟悉${department.name}的服务边界与协同机制。`,
+      completeness: 90,
+    });
+  }
+  const hasMember = seedPeople.some((person) => person.department === department.name && person.id !== department.leaderId);
+  if (!hasMember) {
+    seedPeople.push({
+      id: `p-dept-member-${index + 1}`,
+      name: generatedMemberNames[index],
+      department: department.name,
+      departmentPath: department.path.slice(),
+      role: "协同专员",
+      contact: `1390000${String(2101 + index).padStart(4, "0")}`,
+      domains: [department.name, "事项协同"],
+      selfPortrait: `我协助处理${department.name}的日常咨询、事项登记和协同跟进。`,
+      peerPortrait: `能够配合完成${department.name}的日常服务和材料整理。`,
+      completeness: 78,
+    });
+  }
+});
+
+export const seedRoles = ["董事长", "副行长", "部门负责人", "部门经理", "经理", "科长", "主管", "专员", "协同专员"];
 
 // ── 本周推荐次数 ───────────────────────────────────────────────────────────
 export const recommendedCountMap = {
@@ -244,13 +362,31 @@ export const seedContent = [
     body: "新用户可先阅读手册，再报名体验场培训。手册版本按月更新。",
     publishedAt: "2026-06-25", pinned: true, weeklyQueryCount: 62, weeklyRecommendCount: 48,
   },
+  {
+    id: "c-pending-model", ownerId: "p-chen", title: "模型调用额度申请补充说明",
+    tags: ["大模型", "额度申请"], summary: "补充额度申请需要准备的业务说明和容量预估信息。",
+    body: "请提交使用场景、模型类型、调用峰值和责任人信息，便于完成额度评估。",
+    status: "待审核", submittedAt: "2026-07-22", updatedAt: "2026-07-22", version: 1, pinned: false, weeklyQueryCount: 0, weeklyRecommendCount: 0,
+  },
+  {
+    id: "c-pending-data", ownerId: "p-luo", title: "数据质量问题提报规范",
+    tags: ["数据治理", "数据质量"], summary: "统一数据质量问题的提报字段、影响范围和反馈时限。",
+    body: "提报时应包含数据来源、异常样例、影响范围和期望处理时限。",
+    status: "待审核", submittedAt: "2026-07-21", updatedAt: "2026-07-21", version: 1, pinned: false, weeklyQueryCount: 0, weeklyRecommendCount: 0,
+  },
+  {
+    id: "c-pending-flow", ownerId: "p-tang", title: "跨部门事项协同登记要求",
+    tags: ["流程审批", "协同流转"], summary: "明确跨部门事项的协同登记时点和责任记录要求。",
+    body: "首问受理后需要记录协同部门、协同事项、反馈时限和最终结论。",
+    status: "待审核", submittedAt: "2026-07-20", updatedAt: "2026-07-20", version: 1, pinned: false, weeklyQueryCount: 0, weeklyRecommendCount: 0,
+  },
 ];
 
 // ── 操作手册章节 ───────────────────────────────────────────────────────────
 export const manualSections = [
   { title: "1. 登录与首页", body: "支持用户名/手机号 + 密码登录。进入后默认看到首问助手首页，可直接发起提问或进入历史对话。" },
   { title: "2. 智能问答与历史对话", body: "每次提问都会生成会话记录，支持搜索、标题修改和直接删除。" },
-  { title: "3. 名片库与人员主页", body: "名片库支持一级、二级、三级部门联动筛选；点击名片可进入人员主页查看职责、画像和公开发布内容。" },
+  { title: "3. 名片库与人员主页", body: "名片库支持按实际组织层级逐级筛选；点击名片可进入人员主页查看职责、画像和公开发布内容。" },
   { title: "4. 个人中心与后台", body: "个人中心可维护资料、发布内容、查看操作手册；后台支持查看人员规模、发布内容、本周推荐热度和周活趋势。" },
 ];
 
@@ -275,6 +411,11 @@ export const domainDictionary = {
 
 // ── 当前登录用户 ───────────────────────────────────────────────────────────
 export const currentUserId = "p-lin";
+
+/** 当前会话用户；无会话时回退到管理员演示账号。 */
+export function getActiveUserId() {
+  return loadJson(STORAGE_KEYS.auth, {}).userId || currentUserId;
+}
 
 // ── 种子评价日期 ───────────────────────────────────────────────────────────
 export const reviewDates = ["2026-07-05", "2026-07-03", "2026-06-29", "2026-06-26", "2026-06-21", "2026-06-16"];
@@ -324,18 +465,20 @@ export function normalize(value) {
 
 /** 规范化人员记录：补齐 departmentPath 和 recommendedCount */
 export function normalizePersonRecord(person) {
-  const department = person.department || person.departmentPath?.[2] || "未分组";
+  const department = person.department || person.departmentPath?.at(-1) || "未分组";
   return {
     ...person,
     department,
     departmentPath:
-      Array.isArray(person.departmentPath) && person.departmentPath.length >= 3
-        ? person.departmentPath.slice(0, 3)
-        : (departmentHierarchyMap[department] || ["未分组", "未分组", department]),
+      Array.isArray(person.departmentPath) && person.departmentPath.length
+        ? person.departmentPath.slice()
+        : (departmentHierarchyMap[department] || ["未分组", department]),
     recommendedCount:
       typeof person.recommendedCount === "number"
         ? person.recommendedCount
         : (recommendedCountMap[person.id] || 0),
+    systemRole: person.systemRole || (person.id === currentUserId ? "管理员" : "普通成员"),
+    active: person.active !== false,
   };
 }
 
@@ -350,6 +493,11 @@ export function normalizeContentRecord(item) {
     summary: item.summary || "",
     body: item.body || item.summary || "",
     status: item.status || "已发布",
+    submittedAt: item.submittedAt || item.updatedAt || item.publishedAt || getTodayText(),
+    updatedAt: item.updatedAt || item.publishedAt || getTodayText(),
+    version: Number(item.version || 1),
+    auditTrail: Array.isArray(item.auditTrail) ? item.auditTrail : [],
+    publishedSnapshot: item.publishedSnapshot || null,
     publishedAt: item.publishedAt || getTodayText(),
     pinned: Boolean(item.pinned),
     weeklyQueryCount: Number.isFinite(item.weeklyQueryCount) ? item.weeklyQueryCount : 0,

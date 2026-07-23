@@ -192,7 +192,7 @@ try {
   if (directory.personCards < 6) failed.push("directory cards missing");
   if (!mine.hasProfileDetail || mine.blockCount < 4) failed.push("mine overview blocks missing");
   if (!mine.portraitColumns.includes("px") || mine.portraitColumns.split(" ").length < 2) failed.push("mine portraits are not side by side");
-  if (!mine.actionText.includes("为他人画像")) failed.push("mine review entry missing");
+  if (mine.actionText !== "编辑") failed.push("mine profile actions should only contain edit");
   if (exceptions.length) failed.push("runtime exceptions found");
 
   console.log(JSON.stringify(result, null, 2));

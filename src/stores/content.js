@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import {
   currentUserId,
+  getActiveUserId,
   getTodayText,
   normalize,
   normalizeContentRecord,
@@ -29,8 +30,13 @@ export const useContentStore = defineStore("content", {
   getters: {
     sortedContents: (state) => state.contents.slice().sort(sortContent),
     myContent() {
-      return this.contents.filter((item) => item.ownerId === currentUserId).sort(sortContent);
+      return this.contents.filter((item) => item.ownerId === getActiveUserId()).sort(sortContent);
     },
+    publishedContents: (state) => state.contents.filter((item) => item.status === "已发布").sort(sortContent),
+    publicContentRecords: (state) => state.contents
+      .flatMap((item) => item.status === "已发布" ? [item] : (item.publishedSnapshot ? [item.publishedSnapshot] : []))
+      .sort(sortContent),
+    pendingContents: (state) => state.contents.filter((item) => item.status === "待审核").sort(sortContent),
   },
   actions: {
     persist() {
@@ -45,7 +51,7 @@ export const useContentStore = defineStore("content", {
       return this.contents.find((item) => item.id === id);
     },
     contentByOwner(ownerId) {
-      return this.contents.filter((item) => item.ownerId === ownerId).sort(sortContent);
+      return this.publicContentRecords.filter((item) => item.ownerId === ownerId);
     },
     filteredMyContent(keyword) {
       const key = normalize(keyword);
@@ -55,14 +61,14 @@ export const useContentStore = defineStore("content", {
       );
     },
     isOwnContent(item) {
-      return item?.ownerId === currentUserId;
+      return item?.ownerId === getActiveUserId();
     },
-    async saveContent(payload) {
+    async saveContent(payload, mode = "submit") {
       const editingId = payload.editingId || payload.id || "";
       const existing = this.getContent(editingId);
       const record = normalizeContentRecord({
         id: editingId || `c-${Date.now()}`,
-        ownerId: currentUserId,
+        ownerId: getActiveUserId(),
         title: payload.title,
         tags: splitTags(payload.tagsText ?? payload.tags),
         summary: payload.summary,
@@ -71,6 +77,12 @@ export const useContentStore = defineStore("content", {
         pinned: existing?.pinned || false,
         weeklyQueryCount: existing?.weeklyQueryCount || payload.weeklyQueryCount || 12,
         weeklyRecommendCount: existing?.weeklyRecommendCount || payload.weeklyRecommendCount || 8,
+        status: mode === "draft" ? "草稿" : "待审核",
+        submittedAt: mode === "draft" ? existing?.submittedAt || "" : getTodayText(),
+        updatedAt: getTodayText(),
+        version: (existing?.version || 0) + 1,
+        auditTrail: existing?.auditTrail || [],
+        publishedSnapshot: existing?.status === "已发布" ? { ...existing, publishedSnapshot: null } : existing?.publishedSnapshot || null,
       });
       if (isServerMode()) {
         const saved = editingId ? await updateContent(editingId, record) : await createServerContent(record);
@@ -85,6 +97,28 @@ export const useContentStore = defineStore("content", {
       this.activeContentId = record.id;
       this.persist();
       return record;
+    },
+    async auditContent(id, approved, reviewerName, reason = "") {
+      const item = this.getContent(id);
+      if (!item || item.status !== "待审核") return false;
+      const status = approved ? "已发布" : "已驳回";
+      const auditRecord = {
+        version: item.version,
+        status,
+        reviewer: reviewerName,
+        auditedAt: getTodayText(),
+        reason: approved ? "" : reason,
+      };
+      const updated = normalizeContentRecord({
+        ...item,
+        status,
+        publishedAt: approved ? getTodayText() : item.publishedAt,
+        auditTrail: [...(item.auditTrail || []), auditRecord],
+      });
+      if (isServerMode()) await updateContent(id, updated);
+      this.contents = this.contents.map((record) => (record.id === id ? updated : record));
+      this.persist();
+      return true;
     },
     async deleteContent(id) {
       const item = this.getContent(id);

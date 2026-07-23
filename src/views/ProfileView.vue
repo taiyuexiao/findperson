@@ -5,8 +5,11 @@
       :person="person"
       :content="content.contentByOwner(person.id)"
       :reviews="reviews.reviewsForPerson(person.id)"
+      :department="directory.getDepartment(person.department)"
+      :supervisor="supervisor"
       @back="goBack"
       @content="openContent"
+      @supervisor="openSupervisor"
     />
     <div v-else class="empty-state">没有找到该人员主页。</div>
   </section>
@@ -26,6 +29,7 @@ const directory = useDirectoryStore();
 const content = useContentStore();
 const reviews = useReviewsStore();
 const person = computed(() => directory.getPerson(route.params.id));
+const supervisor = computed(() => directory.getPersonSupervisor(person.value?.id));
 
 function goBack() {
   if (route.query.from === "ask") router.push({ name: "ask" });
@@ -34,5 +38,9 @@ function goBack() {
 
 function openContent(id) {
   router.push({ name: "contentDetail", params: { id }, query: { from: "profile", personId: route.params.id } });
+}
+
+function openSupervisor(id) {
+  router.push({ name: "profile", params: { id }, query: { from: "profile" } });
 }
 </script>

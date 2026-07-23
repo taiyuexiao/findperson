@@ -1373,7 +1373,7 @@ select:focus,
 .toolbar {
   align-items: center;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   padding: 14px;
   border-radius: 20px;
@@ -1385,8 +1385,8 @@ select:focus,
   gap: 10px;
 }
 
-.triple-filter {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.department-filter {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .content-filters {
@@ -1767,6 +1767,141 @@ time {
 .admin-layout {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.admin-tabs > .el-tabs__header,
+.audit-tabs > .el-tabs__header {
+  margin-bottom: 18px;
+}
+
+.admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.admin-section-head h2,
+.admin-section-head p,
+.admin-panel h3,
+.admin-panel p {
+  margin-bottom: 0;
+}
+
+.admin-section-head p,
+.admin-panel > p,
+.audit-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-table-wrap,
+.admin-panel,
+.audit-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  overflow: hidden;
+}
+
+.admin-table-wrap .el-table {
+  --el-table-border-color: var(--line);
+  --el-table-header-bg-color: var(--surface-soft);
+}
+
+.role-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--frame-gap);
+}
+
+.admin-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.role-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.role-chip button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.full-width { width: 100%; }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.status-published { background: var(--success-soft); color: var(--success); }
+.status-pending { background: var(--warning-soft); color: var(--warning); }
+.status-draft { background: var(--surface-tint); color: var(--muted); }
+.status-rejected { background: var(--danger-soft); color: var(--danger); }
+
+.section-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.section-row h2 { margin-bottom: 0; }
+.supervisor-tag { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid #d8e4f5; border-radius: 6px; background: #f6f9ff; color: #35638f; font-size: 12px; font-weight: 650; }
+button.supervisor-tag { font-family: inherit; cursor: pointer; }
+button.supervisor-tag:hover { border-color: #9bbce9; background: #edf4ff; color: var(--primary); }
+
+.department-responsibility-block { display: grid; gap: 12px; }
+.department-responsibility-block p { white-space: pre-wrap; }
+.responsibility-manager { display: grid; gap: 18px; }
+.responsibility-filter-row { display: flex; justify-content: flex-start; }
+.responsibility-filter { width: min(100%, 460px); }
+.responsibility-list { display: grid; gap: 14px; }
+.responsibility-item { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 8px 20px rgba(24, 50, 86, 0.04); }
+.responsibility-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.responsibility-item h3 { margin: 0; font-size: 16px; }
+.responsibility-item p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.responsibility-copy { color: var(--text) !important; font-size: 14px !important; line-height: 1.8; }
+.responsibility-item-actions { display: flex; justify-content: flex-end; }
+.filter-trigger { width: 44px; height: 44px; padding: 0; border-radius: 14px; }
+.directory-filter-popper { padding: 0 !important; border: 1px solid var(--line) !important; border-radius: 16px !important; overflow: hidden; box-shadow: 0 16px 36px rgba(24, 50, 86, 0.16) !important; }
+.directory-filter-panel { display: grid; gap: 12px; padding: 16px; background: #fff; }
+.directory-filter-head { display: flex; justify-content: space-between; gap: 12px; }
+.directory-filter-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.filter-all-node { width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; font-weight: 650; text-align: left; cursor: pointer; }
+.filter-all-node:hover, .filter-all-node.active { background: var(--surface-tint); color: var(--primary); }
+.directory-filter-panel .el-tree { max-height: 360px; overflow: auto; padding: 4px; background: #fff; color: var(--text); }
+.directory-filter-panel .el-tree-node__content { height: 34px; border-radius: 8px; }
+.directory-filter-panel .el-tree-node__content:hover, .directory-filter-panel .is-current > .el-tree-node__content { background: var(--surface-tint); color: var(--primary); }
+.directory-filter-footer { display: flex; justify-content: flex-end; padding-top: 10px; border-top: 1px solid var(--line); }
+.filter-reset-button { width: 34px; height: 34px; padding: 0; color: var(--primary); border-color: #c9daf6; background: #f6f9ff; }
+.department-picker { display: flex; width: 100%; gap: 8px; }
+.department-picker .el-select { flex: 1; }
+
+.audit-list { display: grid; gap: 12px; }
+.audit-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; padding: 16px; }
+.audit-item h3 { margin-bottom: 0; }
+.audit-item > div > p { margin: 8px 0; }
+.audit-note { padding-top: 8px; border-top: 1px dashed var(--line); }
+.audit-actions { display: flex; align-items: center; gap: 8px; }
 
 .module-title {
   display: flex;
@@ -2150,11 +2285,13 @@ time {
   .ask-workspace.detail-collapsed,
   .admin-layout,
   .admin-grid,
+  .role-layout,
   .form-grid,
-  .content-filters,
-  .triple-filter {
+  .content-filters {
     grid-template-columns: 1fr;
   }
+
+  .responsibility-item { grid-template-columns: 1fr; }
 
   .content-item-manage {
     grid-template-columns: 1fr;
@@ -2266,4 +2403,6 @@ time {
   .login-brand {
     align-items: flex-start;
   }
+
+  .audit-item { grid-template-columns: 1fr; }
 }

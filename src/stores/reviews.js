@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import {
-  currentUserId,
+  getActiveUserId,
   getTodayText,
 } from "../state.js";
 import {
@@ -23,7 +23,7 @@ export const useReviewsStore = defineStore("reviews", {
       return this.reviews.filter((item) => item.reviewer === auth.displayName && !item.id.endsWith("-seed"));
     },
     receivedReviews() {
-      return this.reviewsForPerson(currentUserId);
+      return this.reviewsForPerson(getActiveUserId());
     },
   },
   actions: {
@@ -58,7 +58,7 @@ export const useReviewsStore = defineStore("reviews", {
         .sort((left, right) => right.count - left.count || String(right.latestDate).localeCompare(String(left.latestDate)));
     },
     async saveReview(payload) {
-      if (payload.personId === currentUserId) return { ok: false, message: "不能为自己补充他画像" };
+      if (payload.personId === getActiveUserId()) return { ok: false, message: "不能为自己补充他画像" };
       const tag = String(payload.tag || payload.text || "").trim();
       if (!tag) return { ok: false, message: "请选择或填写事项" };
       const auth = useAuthStore();

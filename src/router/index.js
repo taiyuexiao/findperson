@@ -56,6 +56,7 @@ router.beforeEach(async (to) => {
     return { name: "login", query: { redirect: to.fullPath } };
   }
   if (to.name === "login" && auth.isLoggedIn) return { name: "ask" };
+  if (to.name === "admin" && !auth.isAdmin) return { name: "ask" };
   return true;
 });
 

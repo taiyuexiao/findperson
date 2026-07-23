@@ -10,7 +10,7 @@
       </div>
     </div>
     <nav class="sidebar-nav" aria-label="页面导航">
-      <RouterLink v-for="item in navItems" :key="item.name" :to="{ name: item.name }" custom v-slot="{ href, navigate, isActive }">
+      <RouterLink v-for="item in visibleNavItems" :key="item.name" :to="{ name: item.name }" custom v-slot="{ href, navigate, isActive }">
         <a class="nav-button" :class="{ active: isActive }" :href="href" @click="navigate">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
@@ -21,13 +21,16 @@
 </template>
 
 <script setup>
-import { ChatDotRound, Collection, DataAnalysis, User } from "@element-plus/icons-vue";
+import { computed } from "vue";
+import { ChatDotRound, Collection, DataAnalysis } from "@element-plus/icons-vue";
 import logoUrl from "../../../assets/logo.png";
+import { useAuthStore } from "../../stores/auth.js";
 
 const navItems = [
   { name: "ask", label: "智能问答", icon: ChatDotRound },
   { name: "directory", label: "名片库", icon: Collection },
-  { name: "mine", label: "个人中心", icon: User },
   { name: "admin", label: "后台管理", icon: DataAnalysis },
 ];
+const auth = useAuthStore();
+const visibleNavItems = computed(() => navItems.filter((item) => item.name !== "admin" || auth.isAdmin));
 </script>

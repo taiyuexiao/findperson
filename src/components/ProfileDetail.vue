@@ -17,11 +17,18 @@
           <span class="chain-item">{{ departmentText }}</span>
           <span class="chain-dot"></span>
           <span class="chain-item">{{ person.role }}</span>
+          <button v-if="supervisor" class="supervisor-tag" type="button" @click="$emit('supervisor', supervisor.person.id)">上级：{{ supervisorText }}</button>
+          <span v-else class="supervisor-tag">上级：{{ supervisorText }}</span>
         </div>
         <p class="person-meta">联系方式：{{ person.contact }}</p>
         <div class="field-row">
           <span v-for="tag in person.domains" :key="tag" class="tag">{{ tag }}</span>
         </div>
+      </section>
+
+      <section v-if="department" class="profile-block department-responsibility-block">
+        <div class="section-row"><h2>部门职责</h2><span class="status-chip status-published">{{ department.name }}</span></div>
+        <p>{{ department.responsibility || '该部门暂未维护部门职责说明。' }}</p>
       </section>
 
       <!-- 自画像 + 他画像 -->
@@ -73,12 +80,18 @@ const props = defineProps({
   content: Array,
   /** 该人员的评价列表 */
   reviews: Array,
+  department: Object,
+  supervisor: { type: Object, default: null },
 });
-defineEmits(['back', 'content']);
+defineEmits(['back', 'content', 'supervisor']);
 
 /** 部门路径文本 */
 const departmentText = computed(() =>
   props.person.departmentPath?.join(' / ') || props.person.department
+);
+const supervisorText = computed(() => props.supervisor
+  ? `${props.supervisor.department.name} · ${props.supervisor.person.name}`
+  : "暂未设置"
 );
 
 /** 他画像按事项聚合，并按评价人数和最近评价时间排序。 */

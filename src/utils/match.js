@@ -180,6 +180,7 @@ export function buildAssistantAction(
 /** 根据问题分析结果匹配相关内容，按置顶 → 命中分 → 发布时间排序 */
 export function matchContent(analysis, contentList) {
   return contentList
+    .flatMap((item) => item.status === "已发布" ? [item] : (item.publishedSnapshot ? [item.publishedSnapshot] : []))
     .map((item) => {
       const text = normalize(
         `${item.title} ${item.tags.join(" ")} ${item.summary} ${item.body || ""}`
@@ -210,7 +211,9 @@ export function matchContent(analysis, contentList) {
  * 综合考虑：负责领域、岗位职责、自画像、他画像、发布内容、推荐次数
  */
 export function scorePerson(person, analysis, contentHits, contentList, reviewsForPersonFn) {
-  const personContent = contentList.filter((item) => item.ownerId === person.id);
+  const personContent = contentList
+    .flatMap((item) => item.status === "已发布" ? [item] : (item.publishedSnapshot ? [item.publishedSnapshot] : []))
+    .filter((item) => item.ownerId === person.id);
   const haystack = normalize(
     [
       person.name,

@@ -10,7 +10,8 @@
     <label class="wide">发布内容<el-input v-model="form.body" type="textarea" :rows="8" /></label>
     <div class="form-actions wide">
       <el-button v-if="form.editingId" class="secondary-button" @click="$emit('delete')">删除内容</el-button>
-      <el-button class="primary-button" type="primary" @click="$emit('save')">{{ form.editingId ? '保存内容' : '发布内容' }}</el-button>
+      <el-button class="secondary-button" @click="$emit('save', 'draft')">保存草稿</el-button>
+      <el-button class="primary-button" type="primary" @click="$emit('save', 'submit')">提交审核</el-button>
       <span role="status">{{ status }}</span>
     </div>
   </el-form>
