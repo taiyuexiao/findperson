@@ -50,6 +50,14 @@ export const useContentStore = defineStore("content", {
     getContent(id) {
       return this.contents.find((item) => item.id === id);
     },
+    canViewContent(item, userId = getActiveUserId(), isAdmin = false) {
+      return Boolean(this.visibleContent(item, userId, isAdmin));
+    },
+    visibleContent(item, userId = getActiveUserId(), isAdmin = false) {
+      if (!item) return null;
+      if (item.status === "已发布" || item.ownerId === userId || isAdmin) return item;
+      return item.publishedSnapshot || null;
+    },
     contentByOwner(ownerId) {
       return this.publicContentRecords.filter((item) => item.ownerId === ownerId);
     },
@@ -131,7 +139,7 @@ export const useContentStore = defineStore("content", {
     },
     async toggleContentPin(id) {
       const item = this.getContent(id);
-      if (!this.isOwnContent(item)) return false;
+      if (!this.isOwnContent(item) || item.status !== "已发布") return false;
       if (isServerMode()) await toggleServerContentPin(id, { pinned: !item.pinned });
       item.pinned = !item.pinned;
       this.persist();

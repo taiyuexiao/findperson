@@ -17,10 +17,10 @@ export const useAdminStore = defineStore("admin", {
       if (this.serverMetrics) return this.serverMetrics;
       const directory = useDirectoryStore();
       const content = useContentStore();
-      const domains = new Set(directory.people.flatMap((person) => person.domains));
-      const weeklyRecommendationTotal = directory.people.reduce((total, person) => total + person.recommendedCount, 0);
+      const domains = new Set(directory.activePeople.flatMap((person) => person.domains));
+      const weeklyRecommendationTotal = directory.activePeople.reduce((total, person) => total + person.recommendedCount, 0);
       return {
-        peopleCount: directory.people.length,
+        peopleCount: directory.activePeople.length,
         contentCount: content.contents.length,
         domainCount: domains.size,
         weeklyRecommendationTotal,
@@ -28,7 +28,7 @@ export const useAdminStore = defineStore("admin", {
     },
     ranking() {
       if (this.serverRanking) return this.serverRanking;
-      return useDirectoryStore().people
+      return useDirectoryStore().activePeople
         .map((person) => ({ person, value: person.recommendedCount }))
         .sort((a, b) => b.value - a.value)
         .slice(0, 10);

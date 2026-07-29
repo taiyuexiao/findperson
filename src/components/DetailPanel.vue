@@ -89,7 +89,7 @@
         <p>联系方式：{{ profileUser.contact }}</p>
       </div>
       <div class="thread-card-actions">
-        <button v-if="!detail.action?.confirmed" class="primary-button small-button" @click="$emit('confirmProfile')">
+        <button v-if="!detail.action?.confirmed && canConfirmProfile" class="primary-button small-button" @click="$emit('confirmProfile')">
           确认更新主页
         </button>
         <button class="secondary-button small-button" @click="$emit('mine')">
@@ -146,4 +146,5 @@ const personRelated = computed(() => {
 });
 
 const profileUser = computed(() => personOf(props.currentUserId));
+const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
 </script>

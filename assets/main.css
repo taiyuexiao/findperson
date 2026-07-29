@@ -2067,6 +2067,27 @@ button.supervisor-tag:hover { border-color: #9bbce9; background: #edf4ff; color:
   gap: var(--frame-gap);
 }
 
+.content-detail-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.content-audit-note {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.content-audit-note strong,
+.content-audit-note p {
+  display: block;
+  margin: 0 0 6px;
+}
+
 .content-detail-topbar {
   display: flex;
   align-items: center;

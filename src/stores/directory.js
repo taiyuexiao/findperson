@@ -28,6 +28,7 @@ export const useDirectoryStore = defineStore("directory", {
   }),
   getters: {
     currentUser: (state) => state.people.find((person) => person.id === state.activeUserId),
+    activePeople: (state) => state.people.filter((person) => person.active !== false),
     currentUserDepartment: (state) => state.departments.find((department) => department.name === state.people.find((person) => person.id === state.activeUserId)?.department),
     rootDepartments: (state) => state.departments.filter((department) => !department.parentId),
     departmentTree(state) {

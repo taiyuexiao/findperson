@@ -18,9 +18,9 @@
       </span>
     </div>
     <div class="thread-card-actions" @click.stop>
-      <button v-if="isConfirmed" class="secondary-button small-button" @click="$emit('mine')">继续编辑</button>
-      <button v-else class="primary-button small-button" @click="$emit('confirm', confirmKey)">确认更新主页</button>
-      <button v-if="!isConfirmed" class="secondary-button small-button" @click="$emit('mine')">手动编辑</button>
+      <button v-if="isConfirmed" class="secondary-button small-button" @click="$emit('edit', action)">继续编辑</button>
+      <button v-else-if="hasProfilePatch" class="primary-button small-button" @click="$emit('confirm', confirmKey)">确认更新主页</button>
+      <button v-if="!isConfirmed" class="secondary-button small-button" @click="$emit('edit', action)">手动编辑</button>
     </div>
   </article>
 
@@ -45,8 +45,8 @@
         查看评价对象
       </button>
       <button v-else class="primary-button small-button" @click="$emit('confirm', confirmKey)">确认保存评价</button>
-      <button class="secondary-button small-button" @click="$emit('mine')">
-        {{ isConfirmed ? '去我的主页' : '去我的主页修改' }}
+      <button class="secondary-button small-button" @click="$emit('edit', action)">
+        {{ isConfirmed ? '继续补充' : '继续修改' }}
       </button>
     </div>
   </article>
@@ -95,12 +95,13 @@ const props = defineProps({
   /** 是否为最新一轮对话 */
   latest: Boolean,
 });
-defineEmits(['confirm', 'mine', 'publish', 'profile', 'content', 'detail']);
+defineEmits(['confirm', 'edit', 'publish', 'profile', 'content', 'detail']);
 
 const action = computed(() => props.card?.action || props.result?.action || {});
 const analysis = computed(() => props.card?.analysis || props.result?.analysis || {});
 const isConfirmed = computed(() => action.value.confirmed || props.card?.status === 'confirmed');
 const confirmKey = computed(() => props.card?.id || action.value.type);
+const hasProfilePatch = computed(() => Object.keys(action.value.nextProfilePatch || {}).length > 0);
 
 /** 评价对象的人员信息 */
 const reviewPerson = computed(() => {

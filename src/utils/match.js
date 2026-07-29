@@ -139,7 +139,7 @@ export function buildAssistantAction(
         personId: person.id,
         reviewer: authName,
         date: getTodayText(),
-        text: `${person.name}在${person.domains[0]}相关问题上响应及时，适合作为首问协同对象。`,
+        tag: person.domains[0] || "协同响应",
       },
     };
   }

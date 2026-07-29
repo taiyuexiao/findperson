@@ -22,6 +22,7 @@ import ProfileDetail from "../components/ProfileDetail.vue";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import { useReviewsStore } from "../stores/reviews.js";
+import { returnToSource } from "../utils/navigation.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -32,15 +33,14 @@ const person = computed(() => directory.getPerson(route.params.id));
 const supervisor = computed(() => directory.getPersonSupervisor(person.value?.id));
 
 function goBack() {
-  if (route.query.from === "ask") router.push({ name: "ask" });
-  else router.push({ name: "directory" });
+  returnToSource(router, route, { name: "directory" });
 }
 
 function openContent(id) {
-  router.push({ name: "contentDetail", params: { id }, query: { from: "profile", personId: route.params.id } });
+  router.push({ name: "contentDetail", params: { id }, query: { redirect: route.fullPath } });
 }
 
 function openSupervisor(id) {
-  router.push({ name: "profile", params: { id }, query: { from: "profile" } });
+  router.push({ name: "profile", params: { id }, query: { redirect: route.fullPath } });
 }
 </script>

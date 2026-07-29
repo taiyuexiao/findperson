@@ -44,6 +44,7 @@
 
 <script setup>
 import { onMounted, reactive, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { useAdminStore } from "../stores/admin.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
@@ -59,8 +60,11 @@ onMounted(() => admin.loadAdminData()); watch(() => admin.activeWeek, () => admi
 function editMember(person) { memberForm.value = { ...person, isLeader: directory.isDepartmentLeader(person.id, person.department) }; showMemberDialog.value = true; }
 function addMember() { memberForm.value = { id: "", name: "", department: directory.departments[0]?.name || "", role: "专员", systemRole: "普通成员", active: true, isLeader: false }; showMemberDialog.value = true; }
 function openDepartmentDialog() { Object.assign(departmentForm, { name: "", parentId: "", responsibility: "" }); showDepartmentDialog.value = true; }
-function saveDepartment() { const department = directory.addDepartment(departmentForm); if (!department) return; memberForm.value.department = department.name; showDepartmentDialog.value = false; }
+function saveDepartment() { if (!departmentForm.name.trim()) return ElMessage.warning("请输入部门名称"); const department = directory.addDepartment(departmentForm); if (!department) return ElMessage.warning("同级部门名称不能重复"); memberForm.value.department = department.name; showDepartmentDialog.value = false; }
 function saveMember() {
+  if (!memberForm.value.name?.trim()) return ElMessage.warning("请输入成员姓名");
+  if (!memberForm.value.department) return ElMessage.warning("请选择所属部门");
+  if (!memberForm.value.role?.trim()) return ElMessage.warning("请选择或填写职务");
   const { id, isLeader, ...patch } = memberForm.value;
   const existing = id ? directory.getPerson(id) : null;
   const oldDepartment = existing?.department;

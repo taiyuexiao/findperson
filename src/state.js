@@ -20,6 +20,7 @@ export const STORAGE_KEYS = {
   interactions: "firstResponsibilityDemo.interactions",
   auth: "firstResponsibilityDemo.auth",
   feedback: "firstResponsibilityDemo.feedback",
+  drafts: "firstResponsibilityDemo.drafts",
   organizationSchemaVersion: "firstResponsibilityDemo.organizationSchemaVersion",
 };
 

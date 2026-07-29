@@ -55,6 +55,19 @@ try {
   await waitForEvent("Page.loadEventFired", 10000);
   await delay(500);
 
+  await send("Runtime.evaluate", {
+    expression: `(() => {
+      const inputs = document.querySelectorAll('.login-form input');
+      if (inputs.length < 2) return;
+      inputs[0].value = 'linzhixia';
+      inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+      inputs[1].value = '123456';
+      inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('.login-actions button')?.click();
+    })();`
+  });
+  await delay(700);
+
   const initial = await evaluateObject(() => ({
     title: document.title,
     nav: Array.from(document.querySelectorAll(".nav-button")).map((item) => item.textContent.trim()),
@@ -148,8 +161,10 @@ try {
     hasElementInput: Boolean(document.querySelector(".el-input"))
   }));
 
+  await send("Runtime.evaluate", { expression: `document.querySelector('.avatar-button')?.click();` });
+  await delay(200);
   await send("Runtime.evaluate", {
-    expression: `Array.from(document.querySelectorAll('.nav-button')).find((item) => item.textContent.includes('个人中心'))?.click();`
+    expression: `Array.from(document.querySelectorAll('.el-dropdown-menu__item')).find((item) => item.textContent.includes('个人中心'))?.click();`
   });
   await delay(300);
 
@@ -165,14 +180,88 @@ try {
     };
   });
 
+  await send("Runtime.evaluate", {
+    expression: `Array.from(document.querySelectorAll('.nav-button')).find((item) => item.textContent.includes('智能问答'))?.click();`
+  });
+  await delay(300);
+  await send("Runtime.evaluate", {
+    expression: `(() => {
+      const input = document.querySelector('.ask-composer textarea');
+      input.value = '我要发布一篇平台培训说明';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    })();`
+  });
+  await delay(900);
+  await send("Runtime.evaluate", {
+    expression: `Array.from(document.querySelectorAll('.action-card button')).find((item) => item.textContent.includes('手动补充'))?.click();`
+  });
+  await delay(500);
+
+  const draftFlow = await evaluateObject(() => ({
+    heading: document.querySelector(".page-heading h1")?.textContent?.trim() || "",
+    title: document.querySelector(".form-grid input")?.value || "",
+    hasDraftId: new URLSearchParams(location.search).has("draftId"),
+    hasRedirect: new URLSearchParams(location.search).has("redirect")
+  }));
+
   const capture = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await writeFile(screenshotPath, Buffer.from(capture.data, "base64"));
+
+  await send("Runtime.evaluate", {
+    expression: `Array.from(document.querySelectorAll('.nav-button')).find((item) => item.textContent.includes('智能问答'))?.click();`
+  });
+  await delay(300);
+  await send("Runtime.evaluate", {
+    expression: `(() => {
+      const input = document.querySelector('.ask-composer textarea');
+      input.value = '我要评价一下陈亦舟';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    })();`
+  });
+  await delay(900);
+  await send("Runtime.evaluate", {
+    expression: `Array.from(document.querySelectorAll('.action-card button')).find((item) => item.textContent.includes('继续修改'))?.click();`
+  });
+  await delay(500);
+  const reviewDraftFlow = await evaluateObject(() => ({
+    heading: document.querySelector(".page-heading h1")?.textContent?.trim() || "",
+    selectedPerson: document.querySelector(".form-grid .el-select")?.textContent?.trim() || "",
+    hasDraftId: new URLSearchParams(location.search).has("draftId")
+  }));
+
+  await send("Runtime.evaluate", {
+    expression: `(() => {
+      localStorage.setItem('firstResponsibilityDemo.auth', JSON.stringify({ isLoggedIn: true, userId: 'p-clerk-1', name: '王珂' }));
+      localStorage.setItem('firstResponsibilityDemo.content', JSON.stringify([
+        { id: 'c-private-test', ownerId: 'p-chen', title: '内部待审核版本', tags: ['测试'], summary: '不应公开', body: '不应公开', status: '待审核', submittedAt: '2026-07-29', updatedAt: '2026-07-29', version: 1 },
+        { id: 'c-versioned-test', ownerId: 'p-chen', title: '待审核新版本', tags: ['测试'], summary: '新摘要', body: '新正文', status: '待审核', submittedAt: '2026-07-29', updatedAt: '2026-07-29', version: 2, publishedSnapshot: { id: 'c-versioned-test', ownerId: 'p-chen', title: '公开旧版本', tags: ['测试'], summary: '公开摘要', body: '公开正文', status: '已发布', publishedAt: '2026-07-20', version: 1, auditTrail: [] } }
+      ]));
+      location.href = new URL('/content/c-private-test', location.href).href;
+    })();`
+  });
+  await delay(700);
+  const contentPermission = await evaluateObject(() => ({
+    denied: (document.querySelector(".empty-state")?.textContent || "").includes("无权查看"),
+    bodyVisible: Boolean(document.querySelector(".content-body"))
+  }));
+
+  await send("Runtime.evaluate", {
+    expression: `location.href = new URL('/content/c-versioned-test', location.href).href;`
+  });
+  await delay(700);
+  const publishedSnapshot = await evaluateObject(() => ({
+    title: document.querySelector(".content-detail h1")?.textContent?.trim() || "",
+    body: document.querySelector(".content-body-plain")?.textContent?.trim() || "",
+    status: document.querySelector(".content-detail .status-chip")?.textContent?.trim() || ""
+  }));
 
   const exceptions = events
     .filter((event) => event.method === "Runtime.exceptionThrown")
     .map((event) => event.params?.exceptionDetails?.text || "Runtime exception");
 
-  const result = { targetUrl, screenshotPath, initial, afterEnter, afterAsk, afterPersonCardClick, afterRelatedContentClick, afterNewChatTwice, directory, mine, exceptions };
+  const result = { targetUrl, screenshotPath, initial, afterEnter, afterAsk, afterPersonCardClick, afterRelatedContentClick, afterNewChatTwice, directory, mine, draftFlow, reviewDraftFlow, contentPermission, publishedSnapshot, exceptions };
   const failed = [];
   if (!initial.hasComposer) failed.push("composer missing");
   if (!initial.sendText.includes("发送")) failed.push("send button text missing");
@@ -192,7 +281,11 @@ try {
   if (directory.personCards < 6) failed.push("directory cards missing");
   if (!mine.hasProfileDetail || mine.blockCount < 4) failed.push("mine overview blocks missing");
   if (!mine.portraitColumns.includes("px") || mine.portraitColumns.split(" ").length < 2) failed.push("mine portraits are not side by side");
-  if (mine.actionText !== "编辑") failed.push("mine profile actions should only contain edit");
+  if (!["为他人画像", "发布", "编辑"].every((label) => mine.actionText.includes(label))) failed.push("mine profile actions are incomplete");
+  if (draftFlow.heading !== "内容发布" || !draftFlow.title || !draftFlow.hasDraftId || !draftFlow.hasRedirect) failed.push("ask content draft was not carried to publish page");
+  if (reviewDraftFlow.heading !== "为他人画像" || !reviewDraftFlow.selectedPerson || !reviewDraftFlow.hasDraftId) failed.push("ask review draft was not carried to review page");
+  if (!contentPermission.denied || contentPermission.bodyVisible) failed.push("non-public content is visible to another member");
+  if (publishedSnapshot.title !== "公开旧版本" || publishedSnapshot.body !== "公开正文" || publishedSnapshot.status !== "已发布") failed.push("published snapshot is not preserved while a new version is pending");
   if (exceptions.length) failed.push("runtime exceptions found");
 
   console.log(JSON.stringify(result, null, 2));

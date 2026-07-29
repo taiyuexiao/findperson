@@ -65,7 +65,7 @@
                   :people="directory.people"
                   :latest="true"
                   @confirm="agui.confirmCard"
-                  @mine="router.push({ name: 'mine' })"
+                  @edit="continueActionDraft"
                   @publish="startPublishDraft"
                   @profile="openProfile"
                   @content="openContentDetail"
@@ -83,13 +83,13 @@
         :visible="agui.isDetailSidebarVisible"
         :detail="agui.activeDetail"
         :people="directory.people"
-        :content="content.contents"
+        :content="content.publicContentRecords"
         :feedback="feedback.feedbackMap"
         :current-user-id="auth.userId"
         @close="agui.closeDetailSidebar"
         @profile="openProfile"
         @content="openContentDetail"
-        @mine="router.push({ name: 'mine' })"
+        @mine="continueDetailAction"
         @confirm-profile="confirmProfileFromDetail"
         @toggle-feedback="toggleFeedback"
       />
@@ -99,7 +99,7 @@
 
 <script setup>
 import { computed, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { Memo } from "@element-plus/icons-vue";
 import ActionCard from "../components/ask/ActionCard.vue";
@@ -116,14 +116,17 @@ import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import { useFeedbackStore } from "../stores/feedback.js";
 import { useSessionsStore } from "../stores/sessions.js";
+import { useDraftsStore } from "../stores/drafts.js";
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 const sessions = useSessionsStore();
 const agui = useAguiStore();
 const directory = useDirectoryStore();
 const content = useContentStore();
 const feedback = useFeedbackStore();
+const drafts = useDraftsStore();
 
 sessions.init();
 sessions.ensureActiveSession();
@@ -190,21 +193,35 @@ function toggleFeedback(targetKey, value) {
 }
 
 function openProfile(personId) {
-  router.push({ name: "profile", params: { id: personId }, query: { from: "ask" } });
+  router.push({ name: "profile", params: { id: personId }, query: { redirect: route.fullPath } });
 }
 
 function openContentDetail(contentId) {
-  router.push({ name: "contentDetail", params: { id: contentId }, query: { from: "ask" } });
+  router.push({ name: "contentDetail", params: { id: contentId }, query: { redirect: route.fullPath } });
 }
 
 function startPublishDraft(draft) {
+  const draftId = drafts.create("content", draft || {}, route.fullPath);
   router.push({
     name: "publish",
-    query: {
-      draft: encodeURIComponent(JSON.stringify(draft || {})),
-      from: "ask",
-    },
+    query: { draftId, redirect: route.fullPath },
   });
+}
+
+function continueActionDraft(action) {
+  if (action.type === "profile") {
+    const draftId = drafts.create("profile", action.nextProfilePatch || {}, route.fullPath);
+    router.push({ name: "mine", query: { edit: "profile", draftId, redirect: route.fullPath } });
+  } else if (action.type === "review") {
+    const draftId = drafts.create("review", action.nextReview || {}, route.fullPath);
+    router.push({ name: "review", query: { draftId, redirect: route.fullPath } });
+  }
+}
+
+function continueDetailAction() {
+  if (agui.activeDetail.type === "profileAction") continueActionDraft(agui.activeDetail.action || {});
+  else if (agui.activeDetail.type === "contentDraft") startPublishDraft(agui.activeDetail.draft);
+  else router.push({ name: "mine", query: { redirect: route.fullPath } });
 }
 
 function confirmProfileFromDetail() {

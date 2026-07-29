@@ -4,8 +4,8 @@
     <div v-if="!isEditing" class="profile-detail">
       <ProfileSummary :person="profile" :supervisor="supervisor" @supervisor="openSupervisor">
         <template #actions>
-          <el-button class="secondary-button small-button" @click="router.push({ name: 'review' })">为他人画像</el-button>
-          <el-button class="primary-button small-button" type="primary" :icon="EditPen" @click="router.push({ name: 'publish' })">发布</el-button>
+          <el-button class="secondary-button small-button" @click="openReview">为他人画像</el-button>
+          <el-button class="primary-button small-button" type="primary" :icon="EditPen" @click="openPublish">发布</el-button>
           <el-button class="secondary-button small-button" @click="startEdit">编辑</el-button>
         </template>
       </ProfileSummary>
@@ -65,9 +65,9 @@
               <span v-for="tag in item.tags" :key="tag" class="tag">{{ tag }}</span>
             </div>
             <div class="content-mini-actions" @click.stop>
-              <el-button class="secondary-button small-button" @click="router.push({ name: 'publish', query: { id: item.id } })">编辑</el-button>
+              <el-button class="secondary-button small-button" @click="editContent(item.id)">编辑</el-button>
               <el-button class="secondary-button small-button" @click="deleteContent(item.id)">删除</el-button>
-              <el-button class="secondary-button small-button" @click="content.toggleContentPin(item.id)">{{ item.pinned ? '取消置顶' : '置顶' }}</el-button>
+              <el-button v-if="item.status === '已发布'" class="secondary-button small-button" @click="content.toggleContentPin(item.id)">{{ item.pinned ? '取消置顶' : '置顶' }}</el-button>
             </div>
           </article>
           <div v-if="!content.filteredMyContent(keyword).length" class="empty-state">暂时还没有匹配的本人发布内容。</div>
@@ -75,13 +75,14 @@
       </section>
     </div>
 
-    <ProfileEditor v-else :form="form" :person="profile" :department="department" :status="status" @cancel="isEditing = false" @save="saveProfile" />
+    <ProfileEditor v-else :form="form" :person="profile" :department="department" :status="status" @cancel="cancelEdit" @save="saveProfile" />
   </section>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { ElMessageBox } from "element-plus";
 import { EditPen, Search } from "@element-plus/icons-vue";
 import PeerReviewList from "../components/profile/PeerReviewList.vue";
 import ProfileEditor from "../components/profile/ProfileEditor.vue";
@@ -91,17 +92,22 @@ import { useAuthStore } from "../stores/auth.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import { useReviewsStore } from "../stores/reviews.js";
+import { useDraftsStore } from "../stores/drafts.js";
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const content = useContentStore();
 const reviews = useReviewsStore();
+const drafts = useDraftsStore();
 const isEditing = ref(false);
 const isSearchOpen = ref(false);
 const keyword = ref("");
 const status = ref("");
 const form = reactive({ contact: "", domainsText: "", selfPortrait: "" });
+const formBaseline = ref("");
+const isFormDirty = computed(() => isEditing.value && JSON.stringify(form) !== formBaseline.value);
 const profile = computed(() => directory.currentUser);
 const supervisor = computed(() => directory.getPersonSupervisor(profile.value?.id));
 const department = computed(() => directory.getDepartment(profile.value?.department));
@@ -125,12 +131,20 @@ function startEdit() {
     selfPortrait: profile.value.selfPortrait,
   });
   status.value = "";
+  formBaseline.value = JSON.stringify(form);
   isEditing.value = true;
 }
 
 function saveProfile() {
   auth.updateProfile(form);
   status.value = "已保存";
+  formBaseline.value = JSON.stringify(form);
+  drafts.remove(route.query.draftId);
+  isEditing.value = false;
+}
+
+function cancelEdit() {
+  drafts.remove(route.query.draftId);
   isEditing.value = false;
 }
 
@@ -158,14 +172,52 @@ function statusClass(status) {
 }
 
 function openContent(id) {
-  router.push({ name: "contentDetail", params: { id }, query: { from: "mine" } });
+  router.push({ name: "contentDetail", params: { id }, query: { redirect: route.fullPath } });
 }
 
 function openSupervisor(id) {
-  router.push({ name: "profile", params: { id }, query: { from: "mine" } });
+  router.push({ name: "profile", params: { id }, query: { redirect: route.fullPath } });
 }
 
 async function deleteContent(id) {
-  await content.deleteContent(id);
+  try {
+    await ElMessageBox.confirm("删除后该内容将无法恢复，确认删除？", "删除内容", { type: "warning" });
+    await content.deleteContent(id);
+  } catch {
+    return;
+  }
 }
+
+function openReview() {
+  router.push({ name: "review", query: { redirect: route.fullPath } });
+}
+
+function openPublish() {
+  router.push({ name: "publish", query: { redirect: route.fullPath } });
+}
+
+function editContent(id) {
+  router.push({ name: "publish", query: { id, redirect: route.fullPath } });
+}
+
+onMounted(() => {
+  const draft = drafts.get(route.query.draftId, "profile");
+  if (route.query.edit !== "profile" || !draft) return;
+  startEdit();
+  const patch = draft.payload || {};
+  if (patch.contact !== undefined) form.contact = patch.contact;
+  if (patch.domainsText !== undefined) form.domainsText = patch.domainsText;
+  if (patch.addDomains?.length) form.domainsText = Array.from(new Set([...profile.value.domains, ...patch.addDomains])).join("、");
+  if (patch.selfPortrait !== undefined) form.selfPortrait = patch.selfPortrait;
+});
+
+onBeforeRouteLeave(async () => {
+  if (!auth.isLoggedIn || !isFormDirty.value) return true;
+  try {
+    await ElMessageBox.confirm("当前资料修改尚未保存，确认离开？", "未保存修改", { type: "warning" });
+    return true;
+  } catch {
+    return false;
+  }
+});
 </script>

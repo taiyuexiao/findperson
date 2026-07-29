@@ -5,11 +5,11 @@
 </template>
 <script setup>
 import { computed, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth.js";
 import { useContentStore } from "../../stores/content.js";
 import AuditList from "./AuditList.vue";
 const content = useContentStore(); const auth = useAuthStore(); const tab = ref("pending"); const showReject = ref(false); const reason = ref(""); const targetId = ref(""); const rejected = computed(() => content.contents.filter((item) => item.status === "已驳回"));
-async function audit({ id, approved }) { if (!approved) { targetId.value = id; reason.value = ""; showReject.value = true; return; } await content.auditContent(id, true, auth.displayName); ElMessage.success("内容已发布"); }
+async function audit({ id, approved }) { if (!approved) { targetId.value = id; reason.value = ""; showReject.value = true; return; } try { await ElMessageBox.confirm("审核通过后内容将公开展示并参与推荐，确认通过？", "审核内容", { type: "warning" }); await content.auditContent(id, true, auth.displayName); ElMessage.success("内容已发布"); } catch { return; } }
 async function confirmReject() { if (!reason.value.trim()) return ElMessage.warning("请填写驳回原因"); await content.auditContent(targetId.value, false, auth.displayName, reason.value.trim()); showReject.value = false; ElMessage.success("内容已驳回"); }
 </script>

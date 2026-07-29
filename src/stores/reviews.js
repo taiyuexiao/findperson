@@ -61,6 +61,8 @@ export const useReviewsStore = defineStore("reviews", {
       if (payload.personId === getActiveUserId()) return { ok: false, message: "不能为自己补充他画像" };
       const tag = String(payload.tag || payload.text || "").trim();
       if (!tag) return { ok: false, message: "请选择或填写事项" };
+      if (tag.length > 20) return { ok: false, message: "事项不能超过 20 个字符" };
+      if (!payload.date) return { ok: false, message: "请选择日期" };
       const auth = useAuthStore();
       const existing = this.reviews.find((item) =>
         item.personId === payload.personId &&
@@ -71,7 +73,7 @@ export const useReviewsStore = defineStore("reviews", {
         id: payload.id || existing?.id || `review-${Date.now()}`,
         personId: payload.personId,
         reviewer: auth.displayName,
-        date: payload.date || getTodayText(),
+        date: payload.date,
         tag,
       };
       const saved = isServerMode() ? await createServerReview(record) : record;

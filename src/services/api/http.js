@@ -24,6 +24,10 @@ http.interceptors.response.use(
     const normalized = new Error(error.response?.data?.message || messageMap[status] || error.message || "网络请求失败");
     normalized.status = status;
     normalized.payload = error.response?.data;
+    if (status === 401) {
+      localStorage.removeItem("firstResponsibilityDemo.token");
+      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    }
     return Promise.reject(normalized);
   }
 );

@@ -25,16 +25,17 @@
 
 <script setup>
 import { Filter, RefreshRight, Search } from "@element-plus/icons-vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import PersonCard from "../components/directory/PersonCard.vue";
 import { useDirectoryStore } from "../stores/directory.js";
 
 const router = useRouter();
+const route = useRoute();
 const directory = useDirectoryStore();
 const treeProps = { label: "name", children: "children" };
 
 function openProfile(id) {
-  router.push({ name: "profile", params: { id }, query: { from: "directory" } });
+  router.push({ name: "profile", params: { id }, query: { redirect: route.fullPath } });
 }
 
 function selectDepartment(department) {

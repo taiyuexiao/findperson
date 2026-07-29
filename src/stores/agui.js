@@ -87,7 +87,7 @@ export const useAguiStore = defineStore("agui", {
             runId,
             messageId: assistantMessageId,
             question: text.trim(),
-            people: directory.people,
+            people: directory.activePeople,
             content: content.contents,
             reviewsForPerson: (personId) => reviews.reviewsForPerson(personId),
             currentUserId: auth.userId,
@@ -192,7 +192,7 @@ export const useAguiStore = defineStore("agui", {
       }
       if (action.type === "content") {
         await useContentStore().saveContent(normalizeContentRecord(action.nextContent));
-        ElMessage.success("内容已发布");
+        ElMessage.success("内容已提交审核");
       }
       action.confirmed = true;
       card.status = "confirmed";

@@ -4,14 +4,15 @@ import { getMe, login as serverLogin, logout as serverLogout, updateMyProfile } 
 import { isServerMode } from "../services/mode.js";
 import { useDirectoryStore } from "./directory.js";
 
+const storedAuth = loadJson(STORAGE_KEYS.auth, {});
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({
-    ...loadJson(STORAGE_KEYS.auth, {
-      isLoggedIn: true,
-      userId: currentUserId,
-      name: "林知夏",
-      password: "123456",
-    }),
+    isLoggedIn: Boolean(storedAuth.isLoggedIn),
+    userId: storedAuth.userId || currentUserId,
+    name: storedAuth.name || "",
+    initialized: false,
+    mockPassword: "123456",
   }),
   getters: {
     user() {
@@ -29,9 +30,36 @@ export const useAuthStore = defineStore("auth", {
       saveJson(STORAGE_KEYS.auth, {
         isLoggedIn: this.isLoggedIn,
         userId: this.userId,
-        name: this.displayName,
-        password: this.password,
+        name: this.name,
       });
+    },
+    clearSession() {
+      this.isLoggedIn = false;
+      this.name = "";
+      localStorage.removeItem("firstResponsibilityDemo.token");
+      this.persist();
+    },
+    async bootstrap() {
+      if (this.initialized) return this.isLoggedIn;
+      if (!isServerMode()) {
+        this.initialized = true;
+        this.persist();
+        return this.isLoggedIn;
+      }
+      try {
+        const user = await getMe();
+        if (!user?.id) throw new Error("登录状态无效");
+        this.userId = user.id;
+        this.name = user.name || "";
+        this.isLoggedIn = true;
+        useDirectoryStore().setCurrentUser(user.id);
+        this.persist();
+      } catch {
+        this.clearSession();
+      } finally {
+        this.initialized = true;
+      }
+      return this.isLoggedIn;
     },
     async loadMe() {
       if (!isServerMode()) return this.user;
@@ -47,13 +75,19 @@ export const useAuthStore = defineStore("auth", {
     },
     async login({ account, password }) {
       if (isServerMode()) {
-        const result = await serverLogin({ account, password });
+        let result;
+        try {
+          result = await serverLogin({ account, password });
+        } catch (error) {
+          return { ok: false, message: error.message || "登录失败，请稍后重试" };
+        }
         if (result?.token) localStorage.setItem("firstResponsibilityDemo.token", result.token);
         this.isLoggedIn = true;
         this.userId = result?.user?.id || currentUserId;
         this.name = result?.user?.name || this.displayName;
         useDirectoryStore().setCurrentUser(this.userId);
         this.persist();
+        this.initialized = true;
         return { ok: true };
       }
       const key = normalize(account);
@@ -62,35 +96,32 @@ export const useAuthStore = defineStore("auth", {
         wangke: "p-clerk-1", "王珂": "p-clerk-1", "13800001301": "p-clerk-1",
       };
       const userId = demoAccounts[key];
-      if (!userId || password !== this.password) return { ok: false, message: "账号或密码不正确" };
+      if (!userId || password !== this.mockPassword) return { ok: false, message: "账号或密码不正确" };
+      if (useDirectoryStore().getPerson(userId)?.active === false) return { ok: false, message: "当前账号已停用" };
       this.isLoggedIn = true;
       this.userId = userId;
       this.name = useDirectoryStore().getPerson(userId)?.name || "用户";
       useDirectoryStore().setCurrentUser(userId);
       this.persist();
+      this.initialized = true;
       return { ok: true };
     },
     async logout() {
       if (isServerMode()) await serverLogout().catch(console.warn);
-      this.isLoggedIn = false;
+      this.clearSession();
       useDirectoryStore().setCurrentUser(currentUserId);
-      localStorage.removeItem("firstResponsibilityDemo.token");
-      this.persist();
     },
     changePassword({ currentPassword, nextPassword, confirmPassword }) {
-      if (currentPassword !== this.password) return "原密码不正确";
+      if (currentPassword !== this.mockPassword) return "原密码不正确";
       if (!nextPassword || nextPassword.length < 6) return "新密码至少 6 位";
       if (nextPassword !== confirmPassword) return "两次输入不一致";
-      this.password = nextPassword;
-      this.persist();
+      this.mockPassword = nextPassword;
       return "";
     },
     updateProfile(patch) {
-      const person = useDirectoryStore().updatePerson(this.userId, {
-        contact: patch.contact,
-        domainsText: patch.domainsText,
-        selfPortrait: patch.selfPortrait,
-      });
+      const allowed = ["contact", "domainsText", "selfPortrait", "addDomains"];
+      const profilePatch = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
+      const person = useDirectoryStore().updatePerson(this.userId, profilePatch);
       if (person) {
         this.name = person.name;
         this.persist();
