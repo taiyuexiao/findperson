@@ -1,0 +1,280 @@
+"""AGUI 运行服务:执行 Agent 主链并产出前端可消费的事件序列。
+
+事件契约(与前端 src/services/agui/normalizer.js + stores/agui.js 对齐):
+- 每个事件都是单行 JSON(SSE data:),含 type/sessionId/runId/messageId;
+- run_started 带 result.analysis(意图分析);
+- text_delta/text_finished 流式文本;
+- recommendation_cards(找人)/ confirmation_card(写操作)二选一;
+- state_delta 更新会话标题/摘要/轮次;run_finished 收尾;run_error 兜底。
+
+推荐理由必须指出命中依据(正式责任/领域/画像/内容),不显示"匹配度高"(v4 §四)。
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+import uuid
+from collections.abc import AsyncIterator
+from typing import Any
+
+from app.agent.chain import build_orchestrator
+from app.contracts.agent_state import AgentState, RequestState, UserContext
+from app.contracts.trace import new_trace_id
+from app.core import db
+from app.core.observability import get_metrics, persist_trace
+
+RANK_LABELS = ["首推", "可协助", "相关人员"]
+MAX_CARDS = 3  # v4 §四:找人类问题返回至多三位候选人
+
+
+def _event(event_type: str, ids: dict, **data: Any) -> dict:
+    """统一事件封装:type + 三个归属 ID(v3 §3.3:事件按 sessionId/runId/messageId 归属)。"""
+    return {"type": event_type, **ids, **data}
+
+
+class AguiService:
+    """AGUI 会话与运行服务。"""
+
+    # ---------------- 会话 ----------------
+
+    async def create_session(self, user_id: str, title: str = "新对话") -> dict:
+        session_id = f"session-{uuid.uuid4().hex[:12]}"
+        state = {"title": title, "summary": "", "turnCount": 0}
+        await db.execute(
+            "INSERT INTO agent.agent_sessions(session_id, user_id, state) VALUES($1,$2,$3)",
+            session_id, user_id, json.dumps(state, ensure_ascii=False),
+        )
+        return {"sessionId": session_id, **state}
+
+    async def get_state(self, session_id: str) -> dict | None:
+        row = await db.fetchrow(
+            "SELECT session_id, user_id, state FROM agent.agent_sessions WHERE session_id=$1",
+            session_id)
+        if not row:
+            return None
+        state = row["state"]
+        if isinstance(state, str):
+            state = json.loads(state)
+        msgs = await db.fetch(
+            "SELECT message_id, role, text, analysis, cards FROM agent.agui_messages"
+            " WHERE session_id=$1 ORDER BY id",
+            session_id)
+        return {
+            "sessionId": row["session_id"],
+            **{k: state.get(k) for k in ("title", "summary", "turnCount")},
+            "messages": [{
+                "id": m["message_id"], "role": m["role"], "text": m["text"],
+                "analysis": _loads(m["analysis"]), "cards": _loads(m["cards"]),
+            } for m in msgs],
+        }
+
+    async def _patch_session(self, session_id: str, *, title: str, summary: str) -> None:
+        await db.execute(
+            "UPDATE agent.agent_sessions"
+            " SET state = jsonb_set(jsonb_set(jsonb_set(state,"
+            "   '{title}', to_jsonb($2::text)),"
+            "   '{summary}', to_jsonb($3::text)),"
+            "   '{turnCount}', to_jsonb(coalesce((state->>'turnCount')::int,0)+1)),"
+            "   updated_at=now()"
+            " WHERE session_id=$1",
+            session_id, title[:28], summary[:200],
+        )
+
+    async def _save_message(self, *, session_id: str, message_id: str, run_id: str,
+                            trace_id: str, user_id: str, role: str, text: str,
+                            analysis: dict | None = None, cards: list | None = None) -> None:
+        await db.execute(
+            "INSERT INTO agent.agui_messages"
+            " (message_id, session_id, run_id, trace_id, user_id, role, text, analysis, cards)"
+            " VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            message_id, session_id, run_id, trace_id, user_id, role, text,
+            json.dumps(analysis, ensure_ascii=False, default=str) if analysis else None,
+            json.dumps(cards, ensure_ascii=False, default=str) if cards else None,
+        )
+
+    # ---------------- 运行 ----------------
+
+    async def run_message(
+        self,
+        *,
+        session_id: str,
+        text: str,
+        user_context: UserContext,
+        user_message_id: str = "",
+        client_trace_id: str = "",
+    ) -> AsyncIterator[dict]:
+        """执行一轮问答,按序产出 AG-UI 事件。"""
+        ids = {
+            "sessionId": session_id,
+            "runId": uuid.uuid4().hex,
+            "messageId": f"msg-a-{uuid.uuid4().hex[:12]}",
+        }
+        trace_id = new_trace_id()
+        state = AgentState(request=RequestState(
+            trace_id=trace_id, run_id=ids["runId"], session_id=session_id,
+            user_context=user_context, original_query=text,
+            normalized_query=" ".join(text.split()),
+        ))
+        state.trace.trace_id = trace_id
+        state.trace.run_id = ids["runId"]
+        state.trace.session_id = session_id
+
+        started = time.perf_counter()
+        try:
+            final = await asyncio.wait_for(build_orchestrator().run(state), timeout=30.0)
+        except asyncio.TimeoutError:
+            yield _event("run_error", ids, message="全链执行超时(30s),请稍后重试")
+            yield _event("run_finished", ids)
+            return
+        except Exception as e:  # noqa: BLE001 —— 建流后错误兜底(§5.1)
+            yield _event("run_error", ids, message=str(e)[:300])
+            yield _event("run_finished", ids)
+            return
+
+        await persist_trace(final)
+        get_metrics().record_request(final)
+
+        analysis = self._build_analysis(final)
+        # 持久化:用户消息 + 助手消息
+        try:
+            await self._save_message(session_id=session_id,
+                                     message_id=user_message_id or f"msg-u-{uuid.uuid4().hex[:12]}",
+                                     run_id=ids["runId"], trace_id=trace_id,
+                                     user_id=user_context.user_id, role="user", text=text)
+        except Exception:  # noqa: BLE001 —— 持久化失败不阻断回答
+            pass
+
+        yield _event("run_started", ids, result={"analysis": analysis})
+
+        answer = final.response.final_answer
+        for i in range(0, len(answer), 24):
+            yield _event("text_delta", ids, delta=answer[i : i + 24])
+        yield _event("text_finished", ids)
+
+        cards_payload: list[dict] = []
+        if final.response.confirmation_card:
+            yield _event("confirmation_card", ids, card=final.response.confirmation_card)
+            cards_payload = [final.response.confirmation_card]
+        elif final.response.recommendation_cards:
+            cards = await self._build_recommendation_cards(final)
+            cards_payload = cards
+            if cards:
+                yield _event("recommendation_cards", ids, cards=cards)
+
+        summary = f"{text[:24]} {analysis.get('intent') or ''}".strip()
+        try:
+            await self._save_message(session_id=session_id, message_id=ids["messageId"],
+                                     run_id=ids["runId"], trace_id=trace_id,
+                                     user_id=user_context.user_id, role="assistant",
+                                     text=answer, analysis=analysis, cards=cards_payload)
+            await self._log_recommendation(final, ids=ids, trace_id=trace_id,
+                                           user_id=user_context.user_id, query=text)
+            await self._patch_session(session_id, title=text, summary=summary)
+        except Exception:  # noqa: BLE001
+            pass
+
+        yield _event("state_delta", ids, patch={
+            "title": text[:28], "turnCountIncrement": 1, "summary": summary,
+        })
+        yield _event("run_finished", ids, degraded=final.execution.degraded,
+                     latencyMs=int((time.perf_counter() - started) * 1000))
+
+    # ---------------- 事件内容构建 ----------------
+
+    @staticmethod
+    def _build_analysis(final: AgentState) -> dict:
+        return {
+            "intent": final.intent.intent.value if final.intent.intent else None,
+            "queryType": final.intent.query_type.value if final.intent.query_type else None,
+            "systems": final.understanding.mentioned_systems,
+            "symptoms": final.understanding.symptoms,
+            "concepts": [c.get("canonical_name") for c in final.concept.resolved_concepts],
+            "degraded": final.execution.degraded,
+        }
+
+    async def _build_recommendation_cards(self, final: AgentState) -> list[dict]:
+        ranked = final.ranking.ranked_candidates[:MAX_CARDS]
+        persons = await self._load_persons([c["person_id"] for c in ranked])
+        cards = []
+        for index, c in enumerate(ranked):
+            pid = c["person_id"]
+            cards.append({
+                "id": f"rec-{final.request.run_id}-{pid}",
+                "kind": "recommendation",
+                "rank": index + 1,
+                "rankLabel": RANK_LABELS[min(index, len(RANK_LABELS) - 1)],
+                "person": persons.get(pid, {"id": pid, "name": pid}),
+                "personId": pid,
+                "reasons": _build_reasons(c),
+                "related": [],
+            })
+        return cards
+
+    @staticmethod
+    async def _load_persons(person_ids: list[str]) -> dict[str, dict]:
+        if not person_ids:
+            return {}
+        rows = await db.fetch(
+            "SELECT id, name, department, role, contact FROM public.people WHERE id = ANY($1)",
+            person_ids)
+        return {r["id"]: {"id": r["id"], "name": r["name"], "department": r["department"],
+                          "role": r["role"], "contact": r["contact"]} for r in rows}
+
+    @staticmethod
+    async def _log_recommendation(final: AgentState, *, ids: dict, trace_id: str,
+                                  user_id: str, query: str) -> None:
+        """推荐记录落库(v4 §十二:问题摘要/候选人员/排序证据/会话/消息/运行标识)。"""
+        if not final.ranking.ranked_candidates:
+            return
+        await db.execute(
+            "INSERT INTO agent.agent_recommendation_logs"
+            " (trace_id, session_id, message_id, user_id, query_summary,"
+            "  query_type, rank_policy, ranked_candidates, gate_decision)"
+            " VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            trace_id, ids["sessionId"], ids["messageId"], user_id, query[:80],
+            final.intent.query_type.value if final.intent.query_type else None,
+            final.ranking.rank_policy or None,
+            json.dumps(final.ranking.ranked_candidates[:5], ensure_ascii=False, default=str),
+            final.ranking.gate_decision.value if final.ranking.gate_decision else None,
+        )
+
+
+def _loads(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    return value
+
+
+def _build_reasons(candidate: dict) -> list[str]:
+    """推荐理由:命中依据(正式责任/领域/画像/内容/评价),不只说"匹配度高"(v4 §四)。"""
+    reasons: list[str] = []
+    if candidate.get("has_formal") and candidate.get("responsibilities"):
+        rec = candidate["responsibilities"][0]
+        reasons.append(f"正式责任:{rec.get('title', '')}(责任部门:{rec.get('owner_department', '')})")
+    for e in candidate.get("evidences", []):
+        detail = e.get("detail") or {}
+        etype = e.get("evidence_type", "")
+        if etype == "explicit_self_tag" and detail.get("source_raw_tag"):
+            reasons.append(f"负责领域命中:{detail['source_raw_tag']}")
+        elif etype == "inferred_from_profile":
+            reasons.append("自画像与问题相关")
+        elif etype == "inferred_from_article":
+            hint = detail.get("title_hint") or detail.get("document_id") or ""
+            reasons.append(f"发布过相关内容:{hint}" if hint else "发布过相关内容")
+        elif etype == "inferred_from_review":
+            reasons.append("同事评价提及相关能力")
+        elif etype == "directory_match":
+            reasons.append("人员名录精确匹配")
+    if candidate.get("feedback_adjust"):
+        reasons.append("历史反馈较好" if candidate["feedback_adjust"] > 0 else "历史反馈欠佳")
+    # 去重保序,至多 4 条
+    seen, unique = set(), []
+    for r in reasons:
+        if r and r not in seen:
+            seen.add(r)
+            unique.append(r)
+    return unique[:4] or ["综合证据匹配"]

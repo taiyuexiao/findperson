@@ -1,0 +1,158 @@
+"""一级意图与查询类型识别 + RuleFallbackRouter(V1.2 §5.2 / §5.3)。
+
+- IntentService:LLM 输出严格限制为 Intent Schema;LLM 不允许直接产生
+  人员 ID、最终概念 ID 或 SQL(§5.2)——这里只输出意图枚举。
+- RuleFallbackRouter:LLM 不可用时的应急路由,只覆盖高确定性情况
+  (查电话、谁负责明确系统 X、查某部门某人),不猜测复杂责任关系;
+  所有降级输出显式 degraded=true。
+"""
+from __future__ import annotations
+
+import re
+
+from app.agent.orchestrator import AgentNode, ServiceRegistry
+from app.contracts.agent_state import (
+    AgentState, Intent, IntentState, QueryType, StateUpdate,
+)
+from app.contracts.errors import AgentError, ErrorCode
+from app.core import db
+from app.core.llm_client import LLMPort, get_llm
+
+# ---------------------------------------------------------------- Prompt(业务 Prompt 归本模块,不进 LLM Client)
+
+INTENT_PROMPT = """你是首问责任平台的意图识别器。把用户问题分类为以下一级意图之一:
+
+- find_person:找人(负责人、联系人、专家、谁懂某领域、故障找谁)
+- knowledge_qa:知识问答(制度、流程、操作方法、技术方案)
+- edit:修改资料、发布内容、写评价等写操作
+- chat:闲聊、问候、与平台业务无关的对话
+- unclear:信息严重不足,无法理解意图
+
+若意图是 find_person,再判断查询类型:
+- contact_lookup:查某人的电话/联系方式/基本信息
+- explicit_responsibility:明确问"谁负责某系统/平台/领域"
+- diagnostic:描述故障/症状/异常现象,问该找谁
+- expert_finding:问"谁比较懂/谁是专家/谁做过"
+
+严格输出 JSON(不要输出任何其他内容):
+{{"intent": "...", "query_type": "...或null", "confidence": 0.0~1.0,
+ "needs_clarification": false, "clarify_question": ""}}
+
+用户问题: {query}"""
+
+
+# ---------------------------------------------------------------- RuleFallbackRouter(§5.3)
+
+class RuleFallbackRouter:
+    """LLM 不可用时的应急路由。仅覆盖高确定性情况。"""
+
+    def __init__(self) -> None:
+        self._names: list[str] = []
+        self._loaded = False
+
+    async def _ensure_dict(self) -> None:
+        if self._loaded:
+            return
+        rows = await db.fetch("SELECT name FROM public.people WHERE status='active'")
+        self._names = [r["name"] for r in rows]
+        self._loaded = True
+
+    async def route(self, query: str) -> IntentState | None:
+        """命中高确定性规则则返回 IntentState,否则返回 None(不猜复杂情况)。"""
+        await self._ensure_dict()
+        q = query.strip()
+
+        # 1) 查电话/联系方式 → contact_lookup
+        if re.search(r"(电话|手机号|联系方式|怎么联系)", q):
+            for name in self._names:
+                if name in q:
+                    return IntentState(intent=Intent.FIND_PERSON,
+                                       query_type=QueryType.CONTACT_LOOKUP, confidence=0.95)
+
+        # 2) "谁负责X" → explicit_responsibility
+        if re.search(r"谁(来)?负责", q):
+            return IntentState(intent=Intent.FIND_PERSON,
+                               query_type=QueryType.EXPLICIT_RESPONSIBILITY, confidence=0.9)
+
+        # 3) "X部门(的)谁/人" → contact_lookup(部门找人)
+        if re.search(r"部(的门|人员|谁|找人)", q):
+            return IntentState(intent=Intent.FIND_PERSON,
+                               query_type=QueryType.CONTACT_LOOKUP, confidence=0.85)
+        return None
+
+
+# ---------------------------------------------------------------- IntentService(§5.2)
+
+class IntentService:
+    """LLM 意图识别。输出严格限制为 Schema,非法枚举值视为失败。"""
+
+    def __init__(self, llm: LLMPort | None = None) -> None:
+        self._llm = llm
+
+    async def classify(self, query: str) -> IntentState:
+        llm = self._llm or get_llm()
+        data, _result = await llm.structured_chat(
+            [{"role": "user", "content": INTENT_PROMPT.format(query=query)}],
+            required_keys=["intent", "query_type", "confidence",
+                           "needs_clarification", "clarify_question"],
+        )
+        try:
+            intent = Intent(str(data["intent"]))
+        except ValueError as e:
+            raise AgentError(ErrorCode.INTENT_ERROR, f"LLM 输出非法意图: {data['intent']}") from e
+
+        query_type = None
+        if intent == Intent.FIND_PERSON and data.get("query_type"):
+            try:
+                query_type = QueryType(str(data["query_type"]))
+            except ValueError as e:
+                raise AgentError(ErrorCode.INTENT_ERROR,
+                                 f"LLM 输出非法 query_type: {data['query_type']}") from e
+        if intent == Intent.UNCLEAR:
+            needs_clarification = True
+        else:
+            needs_clarification = bool(data.get("needs_clarification", False))
+
+        return IntentState(
+            intent=intent,
+            query_type=query_type,
+            confidence=float(data.get("confidence") or 0.0),
+            needs_clarification=needs_clarification,
+            clarify_question=str(data.get("clarify_question") or ""),
+        )
+
+
+# ---------------------------------------------------------------- IntentNode
+
+class IntentNode(AgentNode):
+    """意图识别节点。LLM 失败时降级 RuleFallbackRouter(§5.3)。"""
+
+    name = "IntentNode"
+    timeout_ms = 15000
+    on_error = "degrade"  # 双保险:规则也失败时由编排器降级收敛
+
+    async def execute(self, state: AgentState, services: ServiceRegistry) -> StateUpdate:
+        query = state.request.normalized_query or state.request.original_query
+        service = services.get("intent_service") if "intent_service" in services.services else IntentService()
+        try:
+            intent_state = await service.classify(query)
+            return StateUpdate(intent=intent_state)
+        except AgentError as e:
+            if e.code not in (ErrorCode.LLM_ERROR, ErrorCode.TIMEOUT, ErrorCode.INTENT_ERROR):
+                raise
+            # 降级:应急规则路由(§5.3)
+            fallback = RuleFallbackRouter()
+            rule_state = await fallback.route(query)
+            if rule_state is not None:
+                return StateUpdate(
+                    intent=rule_state, degraded=True,
+                    error={"code": e.code.value, "message": f"LLM 不可用,降级规则路由: {e.message}"},
+                )
+            # 规则也不覆盖:不猜测,显式 unclear(§5.3:不通过规则猜测复杂责任关系)
+            return StateUpdate(
+                intent=IntentState(intent=Intent.UNCLEAR, confidence=0.0,
+                                   needs_clarification=True,
+                                   clarify_question="我暂时无法理解您的问题,能否换个说法,例如『谁负责XX系统』?"),
+                degraded=True,
+                error={"code": e.code.value, "message": f"LLM 与规则均不可用: {e.message}"},
+            )

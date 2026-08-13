@@ -1,0 +1,35 @@
+---
+type: responsibilities
+id: responsibility-RA-DPL-005-1
+title: 对象存储
+version: 1
+status: published
+visibility: internal
+sensitivity: 0
+source_type: public.responsibility_assignments
+source_id: RA-DPL-005-1
+source_uri: public.responsibility_assignments/RA-DPL-005-1
+owner_department_id: 6
+updated_at: 1786639746.0749018
+content_hash: 3494dba2075f42df1c79bf91cc586456b48d2d5325426c3f5be9ac22fadf67d9
+extra:
+  intake_department: 数据平台部-存储服务团队
+  owner_department: 数据平台部-存储服务团队
+  owner_person_id: p-0217
+  owner_role: 资源负责人
+  time_limit: 24小时
+  transfer_condition: 职责不符
+  escalation_path: 部门负责人
+---
+
+对象存储由数据平台部-存储服务团队负责。
+
+主要职责包括:
+负责该项基础资源的责任边界、规则维护、重大问题升级和跨团队协调
+
+- 受理部门:数据平台部-存储服务团队
+- 责任部门:数据平台部-存储服务团队
+- 责任人:满佳辰(资源负责人)
+- 时限:24小时
+- 转办条件:职责不符
+- 升级路径:部门负责人
