@@ -1199,7 +1199,7 @@ select:focus,
   flex-direction: column;
   align-items: stretch;
   max-width: 960px;
-  margin-left: auto;
+  margin: 0 auto;  /* 居中:左右留白相等(原 margin-left:auto 导致贴右) */
   padding: 12px 14px;
   border: 1px solid #dbe3ef;
   border-radius: 24px;
