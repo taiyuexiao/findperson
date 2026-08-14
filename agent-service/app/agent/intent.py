@@ -24,7 +24,7 @@ INTENT_PROMPT = """你是首问责任平台的意图识别器。把用户问题�
 
 - find_person:找人(负责人、联系人、专家、谁懂某领域、故障找谁)
 - knowledge_qa:知识问答(制度、流程、操作方法、技术方案)
-- edit:修改资料、发布内容、写评价等写操作
+- edit:写操作,包括修改本人资料(如『我现在负责X』『把我的电话改为X』『我的负责领域更新为X』)、发布内容、为他人写评价/画像
 - chat:闲聊、问候、与平台业务无关的对话
 - unclear:信息严重不足,无法理解意图
 
@@ -81,6 +81,20 @@ class RuleFallbackRouter:
         return None
 
 
+# 高确定性写操作模式(仅供 _looks_like_write 纠偏使用)
+_WRITE_PATTERNS = (
+    r"我的.{1,12}(改为|修改为|改成|更新为|更新成|变为|变成)",
+    r"我(现在|目前|如今)?负责",        # 『我现在负责X』→ 负责领域变更
+    r"(为|给|帮).{1,8}(添加|写|补|补一?条|补充).{0,4}(评价|画像)",
+    r"(发布|投稿|写一?篇|发一?篇)",
+)
+
+
+def _looks_like_write(query: str) -> bool:
+    """高确定性写操作识别(用于纠正 LLM 把写操作误判为 chat/unclear)。"""
+    return any(re.search(p, query) for p in _WRITE_PATTERNS)
+
+
 # ---------------------------------------------------------------- IntentService(§5.2)
 
 class IntentService:
@@ -100,6 +114,11 @@ class IntentService:
             intent = Intent(str(data["intent"]))
         except ValueError as e:
             raise AgentError(ErrorCode.INTENT_ERROR, f"LLM 输出非法意图: {data['intent']}") from e
+
+        # 高确定性写操作校正:LLM 把明显写操作误判为 chat/unclear 时纠偏
+        # (如『我现在负责X』『把我的电话改为X』被误判为闲聊;§5.2 意图枚举不变)
+        if intent in (Intent.CHAT, Intent.UNCLEAR) and _looks_like_write(query):
+            intent = Intent.EDIT
 
         query_type = None
         if intent == Intent.FIND_PERSON and data.get("query_type"):

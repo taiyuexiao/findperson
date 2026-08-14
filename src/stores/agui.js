@@ -188,11 +188,17 @@ export const useAguiStore = defineStore("agui", {
         ElMessage.success("个人主页已更新");
       }
       if (action.type === "review") {
-        await useReviewsStore().saveReview(action.nextReview);
+        const result = await useReviewsStore().saveReview(action.nextReview);
+        if (result?.ok === false) {
+          ElMessage.error(result.message || "评价保存失败");
+          return;
+        }
         ElMessage.success("评价已保存");
       }
       if (action.type === "content") {
-        await useContentStore().saveContent(normalizeContentRecord(action.nextContent));
+        const saved = await useContentStore().saveContent(normalizeContentRecord(action.nextContent));
+        // 回填真实内容 ID,确认后「查看内容」才能跳转详情
+        if (saved?.id) action.nextContent = { ...action.nextContent, id: saved.id };
         ElMessage.success("内容已提交审核");
       }
       action.confirmed = true;

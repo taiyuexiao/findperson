@@ -97,6 +97,9 @@ class ActionDraftService:
             return ACTION_PROFILE
         if re.search(r"(我的|个人)(资料|联系方式|电话|负责领域|自画像|岗位)", q):
             return ACTION_PROFILE
+        # 「我现在/目前负责 X」→ 负责领域变更(核心业务流程 §二 原话用例)
+        if re.search(r"我(现在|目前|如今)?负责", q):
+            return ACTION_PROFILE
         return None
 
     # ---------------- 草稿构建 ----------------
@@ -133,10 +136,15 @@ class ActionDraftService:
         patch = {k: v for k, v in (extracted.get("nextProfilePatch") or {}).items()
                  if v not in (None, "", [])}
         if not patch:
-            # 规则兑底:「电话/联系方式 ... X」(兼容 改为/修改为/是 等说法)
+            # 规则兑底 1:「电话/联系方式 ... X」(兼容 改为/修改为/是 等说法)
             m = re.search(r"(?:联系方式|电话|手机)[^0-9]{0,6}([0-9][0-9\-]{3,})", query)
             if m:
                 patch = {"contact": m.group(1)}
+        if not patch:
+            # 规则兑底 2:「我现在/目前负责 X」→ 负责领域新增
+            m = re.search(r"我(?:现在|目前|如今)?负责([^,，。！？!?]{2,30})", query)
+            if m:
+                patch = {"addDomains": [m.group(1).strip()]}
         if not patch:
             return ActionDraftResult(
                 action_type=ACTION_PROFILE,
@@ -191,6 +199,17 @@ class ActionDraftService:
                 action_type=ACTION_REVIEW,
                 reply_text="他人画像不能评价本人,请确认评价对象。",
                 missing=["personName"])
+        person_id = names.get(person_name, "")
+        if not person_id:
+            # LLM 写出与库内不一致的名字时,尝试库内模糊互包含匹配
+            person_id = next((pid for n, pid in names.items()
+                              if person_name in n or n in person_name), "")
+        if not person_id:
+            return ActionDraftResult(
+                action_type=ACTION_REVIEW,
+                reply_text=(f"没有在名录中找到「{person_name}」,请确认姓名后再试,"
+                            "或点『继续修改』在画像页手动选择同事。"),
+                missing=["personName"])
         # 字段不完整仍出部分草稿卡(v4 §五:手动补充经 draftId 回填)
         card = self._card(ACTION_REVIEW, run_id, {
             "type": ACTION_REVIEW,
@@ -201,7 +220,7 @@ class ActionDraftService:
                         f"日期:{date.today().isoformat()}"],
             "nextReview": {
                 "personName": person_name,
-                "personId": names.get(person_name, ""),
+                "personId": person_id,
                 "tag": tag,
                 "text": tag,  # 前端评价卡渲染 nextReview.text
                 "date": date.today().isoformat(),
