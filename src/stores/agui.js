@@ -78,7 +78,8 @@ export const useAguiStore = defineStore("agui", {
 
       const payload = {
         message: { id: userMessageId, role: "user", text: text.trim() },
-        context: { userId: auth.userId, page: "ask", clientTraceId: runId },
+        // assistantMessageId:服务端事件必须以此 ID 归属,否则前端无法匹配到助手气泡(server 模式契约)
+        context: { userId: auth.userId, page: "ask", clientTraceId: runId, assistantMessageId },
       };
       const source = import.meta.env.VITE_AGUI_MODE === "server"
         ? connectAguiStream({ sessionId, payload, signal: this.abortController.signal, timeoutMs: 30000, retry: 1 })

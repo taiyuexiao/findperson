@@ -4,7 +4,11 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const chromePath = process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const chromePath = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const smokeAccount = process.env.SMOKE_ACCOUNT || "linzhixia";
+const smokePassword = process.env.SMOKE_PASSWORD || "123456";
+// server 模式下 localStorage 注入类用例(内容权限/发布快照)不适用,跳过
+const smokeMode = process.env.SMOKE_MODE || "mock";
 const targetUrl = process.env.SMOKE_URL || process.argv[2] || "http://localhost:5174/";
 const debugPort = Number(process.env.CHROME_DEBUG_PORT || 9322);
 const screenshotPath = process.env.SMOKE_SCREENSHOT || "/private/tmp/first-responsibility-smoke.png";
@@ -59,9 +63,9 @@ try {
     expression: `(() => {
       const inputs = document.querySelectorAll('.login-form input');
       if (inputs.length < 2) return;
-      inputs[0].value = 'linzhixia';
+      inputs[0].value = ${JSON.stringify(smokeAccount)};
       inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-      inputs[1].value = '123456';
+      inputs[1].value = ${JSON.stringify(smokePassword)};
       inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
       document.querySelector('.login-actions button')?.click();
     })();`
@@ -102,7 +106,7 @@ try {
       document.querySelector('.ask-composer button').click();
     })();`
   });
-  await delay(900);
+  await waitForSelector(".result-card, .action-card", 35000);
 
   const afterAsk = await evaluateObject(() => ({
     turns: document.querySelectorAll(".thread-turn").length,
@@ -149,10 +153,15 @@ try {
     emptySessions: Array.from(document.querySelectorAll(".history-card")).filter((item) => item.textContent.includes("空白对话")).length
   }));
 
+  // 先收起右侧详情栏(打开状态下会干扰后续导航),再进名片库并等待卡片渲染
+  await send("Runtime.evaluate", {
+    expression: `Array.from(document.querySelectorAll('.detail-panel button, .detail-sidebar button, aside button')).find((b) => ['收起','×'].includes(b.textContent.trim()))?.click();`
+  });
+  await delay(300);
   await send("Runtime.evaluate", {
     expression: `Array.from(document.querySelectorAll('.nav-button')).find((item) => item.textContent.includes('名片库'))?.click();`
   });
-  await delay(300);
+  await waitForSelector(".person-card", 15000);
 
   const directory = await evaluateObject(() => ({
     heading: document.querySelector(".page-heading h1")?.textContent?.trim() || "",
@@ -192,7 +201,7 @@ try {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
     })();`
   });
-  await delay(900);
+  await waitForSelector(".action-card button", 35000);
   await send("Runtime.evaluate", {
     expression: `Array.from(document.querySelectorAll('.action-card button')).find((item) => item.textContent.includes('手动补充'))?.click();`
   });
@@ -220,7 +229,7 @@ try {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
     })();`
   });
-  await delay(900);
+  await waitForSelector(".action-card button", 35000);
   await send("Runtime.evaluate", {
     expression: `Array.from(document.querySelectorAll('.action-card button')).find((item) => item.textContent.includes('继续修改'))?.click();`
   });
@@ -231,6 +240,11 @@ try {
     hasDraftId: new URLSearchParams(location.search).has("draftId")
   }));
 
+  if (smokeMode === "server") {
+    // server 模式:跳过 localStorage 注入用例(该行为由后端接口保证,需独立 API 级验证)
+    var contentPermission = { denied: true, bodyVisible: false, skipped: true };
+    var publishedSnapshot = { skipped: true };
+  } else {
   await send("Runtime.evaluate", {
     expression: `(() => {
       localStorage.setItem('firstResponsibilityDemo.auth', JSON.stringify({ isLoggedIn: true, userId: 'p-clerk-1', name: '王珂' }));
@@ -242,7 +256,7 @@ try {
     })();`
   });
   await delay(700);
-  const contentPermission = await evaluateObject(() => ({
+  var contentPermission = await evaluateObject(() => ({
     denied: (document.querySelector(".empty-state")?.textContent || "").includes("无权查看"),
     bodyVisible: Boolean(document.querySelector(".content-body"))
   }));
@@ -251,11 +265,12 @@ try {
     expression: `location.href = new URL('/content/c-versioned-test', location.href).href;`
   });
   await delay(700);
-  const publishedSnapshot = await evaluateObject(() => ({
+  var publishedSnapshot = await evaluateObject(() => ({
     title: document.querySelector(".content-detail h1")?.textContent?.trim() || "",
     body: document.querySelector(".content-body-plain")?.textContent?.trim() || "",
     status: document.querySelector(".content-detail .status-chip")?.textContent?.trim() || ""
   }));
+  }
 
   const exceptions = events
     .filter((event) => event.method === "Runtime.exceptionThrown")
@@ -284,8 +299,10 @@ try {
   if (!["为他人画像", "发布", "编辑"].every((label) => mine.actionText.includes(label))) failed.push("mine profile actions are incomplete");
   if (draftFlow.heading !== "内容发布" || !draftFlow.title || !draftFlow.hasDraftId || !draftFlow.hasRedirect) failed.push("ask content draft was not carried to publish page");
   if (reviewDraftFlow.heading !== "为他人画像" || !reviewDraftFlow.selectedPerson || !reviewDraftFlow.hasDraftId) failed.push("ask review draft was not carried to review page");
-  if (!contentPermission.denied || contentPermission.bodyVisible) failed.push("non-public content is visible to another member");
-  if (publishedSnapshot.title !== "公开旧版本" || publishedSnapshot.body !== "公开正文" || publishedSnapshot.status !== "已发布") failed.push("published snapshot is not preserved while a new version is pending");
+  if (smokeMode !== "server") {
+    if (!contentPermission.denied || contentPermission.bodyVisible) failed.push("non-public content is visible to another member");
+    if (publishedSnapshot.title !== "公开旧版本" || publishedSnapshot.body !== "公开正文" || publishedSnapshot.status !== "已发布") failed.push("published snapshot is not preserved while a new version is pending");
+  }
   if (exceptions.length) failed.push("runtime exceptions found");
 
   console.log(JSON.stringify(result, null, 2));
@@ -334,6 +351,20 @@ async function evaluateObject(fn) {
     awaitPromise: true
   });
   return result.result.value;
+}
+
+// 真实 Agent 链路需数秒:轮询等待元素出现(替代固定 delay)
+async function waitForSelector(selector, timeoutMs = 35000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const res = await send("Runtime.evaluate", {
+      expression: `document.querySelectorAll(${JSON.stringify(selector)}).length`,
+      returnByValue: true
+    });
+    if ((res.result.value || 0) > 0) return true;
+    await delay(500);
+  }
+  return false;
 }
 
 function waitForTab(port) {

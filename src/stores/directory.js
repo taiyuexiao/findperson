@@ -74,7 +74,8 @@ export const useDirectoryStore = defineStore("directory", {
   actions: {
     async loadPeople() {
       if (this.loaded && !isServerMode()) return;
-      this.people = isServerMode() ? await fetchPeople() : getMockPeople();
+      // server 模式默认分页 100 条,名片库需要全量(数据集 252 人,一次拉取)
+      this.people = isServerMode() ? await fetchPeople({ page_size: 500 }) : getMockPeople();
       if (!isServerMode()) this.departments = getMockDepartments();
       if (!isServerMode()) this.roles = getMockRoles();
       this.people.forEach((person) => this.syncPersonDepartmentPath(person));
