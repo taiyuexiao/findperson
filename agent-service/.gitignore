@@ -11,3 +11,7 @@ __pycache__/
 data/v2_import/
 data/feedback_export.jsonl
 knowledge-okf-ext/
+
+# 一次性部署/调试脚本(含环境特定信息)
+scripts/_*
+
