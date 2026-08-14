@@ -9,6 +9,9 @@ from ...core.database import get_db
 from ...middleware.deps import get_current_user
 from ...models.content import Content
 from ...models.user import User
+from ...services.publish_event import (
+    CONTENT_CHANGED, CONTENT_DELETED, CONTENT_PUBLISHED, emit_publish_event,
+)
 from ...schemas.contents import (
     ContentCreateRequest,
     ContentUpdateRequest,
@@ -134,6 +137,7 @@ def update_content(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    user = get_current_user(request, db)
     content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
@@ -151,7 +155,8 @@ def update_content(
     # v4 §六:已发布内容被实质性修改时,保留对外公开快照并转入待审核,
     # 审核通过前外部仍只见旧版本(快照以前端消费形态存储:camelCase + 中文状态)
     substantive = any(k in update_data for k in ("title", "summary", "body", "tags"))
-    if content.status == "published" and substantive:
+    was_published = content.status == "published"
+    if was_published and substantive:
         content.published_snapshot = {
             "id": content.id, "ownerId": content.owner_id,
             "ownerName": content.owner.name if content.owner else None,
@@ -176,6 +181,9 @@ def update_content(
         setattr(content, key, value)
 
     content.version += 1
+    if was_published and substantive:
+        # 发布变更事件(rag.publish_events,供增量重建索引消费)
+        emit_publish_event(db, CONTENT_CHANGED, content.id, created_by=user.id)
     db.commit()
     db.refresh(content)
     return _content_to_response(content)
@@ -189,6 +197,8 @@ def delete_content(content_id: str, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
     if content.owner_id != user.id and user.system_role != "管理员":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
+    if content.status == "published":
+        emit_publish_event(db, CONTENT_DELETED, content.id, created_by=user.id)
     content.is_deleted = True
     db.commit()
     return {"message": "已删除"}
@@ -237,6 +247,7 @@ def audit_content(
     if new_status == "published":
         content.published_at = beijing_now.date()
         content.version += 1
+        emit_publish_event(db, CONTENT_PUBLISHED, content.id, created_by=user.id)
 
     db.commit()
     db.refresh(content)

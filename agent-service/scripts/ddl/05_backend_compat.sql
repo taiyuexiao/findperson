@@ -114,3 +114,15 @@ ALTER TABLE public.peer_reviews ADD COLUMN IF NOT EXISTS tag_name VARCHAR(64) NO
 CREATE INDEX IF NOT EXISTS idx_users_department ON public.users(department_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON public.sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON public.messages(session_id);
+
+-- ========== 7. 发布/变更事件(吸收 backend P5 优化) ==========
+-- backend 在内容发布/变更/删除后写事件;agent-service 消费后增量重建 OKF/RAG 索引
+CREATE TABLE IF NOT EXISTS rag.publish_events (
+    id          BIGSERIAL PRIMARY KEY,
+    event_type  TEXT NOT NULL,              -- content_published/content_changed/content_deleted
+    resource_id TEXT NOT NULL,              -- 内容 ID
+    status      TEXT NOT NULL DEFAULT 'pending',  -- pending/consumed/failed
+    created_by  TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_publish_events_status ON rag.publish_events(status, id);
