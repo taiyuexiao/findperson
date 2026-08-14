@@ -70,7 +70,7 @@ def list_contents(
     owner_id: str | None = None,
     pinned: bool | None = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),  # 问答详情/人员主页需拉全量(当前数据量级 620)
     db: Session = Depends(get_db),
 ):
     q = db.query(Content).filter(Content.is_deleted == False)
@@ -147,6 +147,22 @@ def update_content(
     # 状态中文→英文
     if "status" in update_data and update_data["status"] in _STATUS_REVERSE:
         update_data["status"] = _STATUS_REVERSE[update_data["status"]]
+
+    # v4 §六:已发布内容被实质性修改时,保留对外公开快照并转入待审核,
+    # 审核通过前外部仍只见旧版本(快照以前端消费形态存储:camelCase + 中文状态)
+    substantive = any(k in update_data for k in ("title", "summary", "body", "tags"))
+    if content.status == "published" and substantive:
+        content.published_snapshot = {
+            "id": content.id, "ownerId": content.owner_id,
+            "ownerName": content.owner.name if content.owner else None,
+            "title": content.title, "tags": content.tags or [],
+            "summary": content.summary or "", "body": content.body,
+            "status": "已发布",
+            "publishedAt": content.published_at.isoformat() if content.published_at else None,
+            "version": content.version, "auditTrail": content.audit_trail or [],
+        }
+        content.status = "pending_review"
+        content.submitted_at = datetime.now(timezone.utc)
 
     # 处理 published_at（字符串 → date）
     if "published_at" in update_data and isinstance(update_data["published_at"], str):

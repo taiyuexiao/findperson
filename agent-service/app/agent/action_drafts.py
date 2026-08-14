@@ -44,7 +44,7 @@ _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问责任�
 - review(他人画像):提取 personName(被评价人姓名)与 tag(事项标签,不超过20字)
 - content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)/body(正文)
 
-严格输出 JSON(不要输出其他内容):
+严格输出 JSON(不要输出其他内容)。字段格式如下,值必须是从问题中提取的内容,严禁照抄示例中的空值:
 {schema}
 
 用户问题: {query}"""
@@ -99,19 +99,20 @@ class ActionDraftService:
                 reply_text=("我识别到您想执行写操作,但没有完全确认类型。您可以这样说:"
                             "『修改我的联系方式为…』、『为张三添加评价:…』、『发布一篇文章:…』。"))
         # 仅他人画像需要人名词典(评价对象兑底);DB 故障不阻断其余动作
-        names: list[str] = []
+        name_to_id: dict[str, str] = {}
         if action_type == ACTION_REVIEW:
             try:
-                names = await self._known_people_names(query, exclude=user_context.name)
+                name_to_id = await self._known_people_map(query, exclude=user_context.name)
             except Exception:  # noqa: BLE001
-                names = []
+                name_to_id = {}
         extracted, degraded = await self._extract(action_type, query)
         builder = {
             ACTION_PROFILE: self._build_profile,
             ACTION_REVIEW: self._build_review,
             ACTION_CONTENT: self._build_content,
         }[action_type]
-        result = builder(query, user_context, run_id=run_id, extracted=extracted, names=names)
+        result = builder(query, user_context, run_id=run_id, extracted=extracted,
+                         names=name_to_id)
         result.action_type = action_type
         result.degraded = result.degraded or degraded
         return result
@@ -121,6 +122,11 @@ class ActionDraftService:
     def _build_profile(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         patch = {k: v for k, v in (extracted.get("nextProfilePatch") or {}).items()
                  if v not in (None, "", [])}
+        if not patch:
+            # 规则兑底:「联系方式/电话为 X」
+            m = re.search(r"(?:联系方式|电话|手机)(?:为|是|改成|改为)?[:：]?\s*([0-9][0-9\-]{3,})", query)
+            if m:
+                patch = {"contact": m.group(1)}
         if not patch:
             return ActionDraftResult(
                 action_type=ACTION_PROFILE,
@@ -140,33 +146,40 @@ class ActionDraftService:
     def _build_review(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         person_name = str(extracted.get("personName") or "").strip()
         if not person_name and names:
-            person_name = names[0]
+            person_name = next(iter(names.keys()), "")
         tag = str(extracted.get("tag") or "").strip()[:REVIEW_TAG_MAX_LEN]
-        missing = []
-        if not person_name:
-            missing.append("personName")
         if not tag:
-            missing.append("tag")
-        if missing:
+            # 规则兑底:「评价:事项」「画像:事项」
+            m = re.search(r"(?:评价|画像|点评)[:：]([^,，。！？!?]{1,20})", query)
+            if m:
+                tag = m.group(1).strip()[:REVIEW_TAG_MAX_LEN]
+        if not person_name:
             return ActionDraftResult(
                 action_type=ACTION_REVIEW,
                 reply_text="请补充评价对象和事项标签,例如『为李四添加评价:模型网关排障』(事项不超过 20 字)。",
-                missing=missing)
+                missing=["personName"])
         if person_name == ctx.name:
             return ActionDraftResult(
                 action_type=ACTION_REVIEW,
                 reply_text="他人画像不能评价本人,请确认评价对象。",
                 missing=["personName"])
+        # 字段不完整仍出部分草稿卡(v4 §五:手动补充经 draftId 回填)
         card = self._card(ACTION_REVIEW, run_id, {
             "type": ACTION_REVIEW,
             "draftId": f"draft-{run_id}",
             "nextReview": {
                 "personName": person_name,
-                "personId": "",
+                "personId": names.get(person_name, ""),
                 "tag": tag,
                 "date": date.today().isoformat(),
             },
-        }, summary=f"为 {person_name} 添加事项:{tag}")
+        }, summary=f"为 {person_name} 添加事项:{tag or '(待补充)'}")
+        if not tag:
+            return ActionDraftResult(
+                action_type=ACTION_REVIEW, card=card,
+                reply_text=(f"已生成对 {person_name} 的画像评价草稿,还请补充事项标签;"
+                            "可点『继续修改』进入画像页补全后保存。"),
+                missing=["tag"])
         return ActionDraftResult(
             action_type=ACTION_REVIEW, card=card,
             reply_text=f"已生成对 {person_name} 的画像评价草稿,确认保存后写入其他画像。",
@@ -174,22 +187,35 @@ class ActionDraftService:
 
     def _build_content(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         title = str(extracted.get("title") or "").strip()
+        if not title:
+            # 规则兑底:《标题》或「一/篇 XXX」片段
+            m = re.search(r"《([^》]{2,60})》", query) or re.search(r"一?篇([^,，。！？!?]{2,30})", query)
+            if m:
+                title = m.group(1).strip()
         summary = str(extracted.get("summary") or "").strip()
         body = str(extracted.get("body") or "").strip()
         tags = extracted.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in re.split(r"[,、,]", tags) if t.strip()]
-        missing = [k for k, v in (("title", title), ("summary", summary)) if not v]
-        if missing:
+        if not title:
             return ActionDraftResult(
                 action_type=ACTION_CONTENT,
                 reply_text="请补充内容标题和摘要(正文可手动补充),例如『发布文章《K8s 部署实践》,摘要:…』。",
-                missing=missing)
+                missing=["title"])
+        # 摘要/正文缺失仍出部分草稿卡(v4 §五:手动补充经 draftId 跳转发布页回填)
+        missing = [k for k, v in (("summary", summary),) if not v]
         card = self._card(ACTION_CONTENT, run_id, {
             "type": ACTION_CONTENT,
             "draftId": f"draft-{run_id}",
-            "nextContent": {"title": title, "tags": tags, "summary": summary, "body": body or summary},
+            "nextContent": {"title": title, "tags": tags,
+                            "summary": summary, "body": body or summary},
         }, summary=f"发布内容:{title}")
+        if missing:
+            return ActionDraftResult(
+                action_type=ACTION_CONTENT, card=card,
+                reply_text=(f"已生成《{title}》的内容草稿,摘要/正文可点『手动补充』到发布页完善;"
+                            "确认发布后进入待审核状态(审核通过前不会对外公开)。"),
+                missing=missing)
         return ActionDraftResult(
             action_type=ACTION_CONTENT, card=card,
             reply_text="已生成内容草稿,确认发布后进入待审核状态(审核通过前不会对外公开)。",
@@ -222,8 +248,8 @@ class ActionDraftService:
             return {}, True
 
     @staticmethod
-    async def _known_people_names(query: str, *, exclude: str = "") -> list[str]:
-        """文中显式出现的人名(用于 review 对象兜底),排除本人。"""
-        rows = await db.fetch("SELECT name FROM public.people WHERE status='active'")
-        return [r["name"] for r in rows
-                if r["name"] in query and r["name"] != exclude]
+    async def _known_people_map(query: str, *, exclude: str = "") -> dict[str, str]:
+        """文中显式出现的人名 → id(用于 review 对象兜底),排除本人。"""
+        rows = await db.fetch("SELECT id, name FROM public.people WHERE status='active'")
+        return {r["name"]: r["id"] for r in rows
+                if r["name"] in query and r["name"] != exclude}

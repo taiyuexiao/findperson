@@ -53,6 +53,8 @@ class AguiContext(BaseModel):
     userId: str | None = None
     page: str = ""
     clientTraceId: str = ""
+    # 前端本地生成的助手消息 ID:服务端事件必须以此归属(v3 §3.3 事件归属约束)
+    assistantMessageId: str = ""
 
 
 class SendMessageRequest(BaseModel):
@@ -127,6 +129,7 @@ async def send_message(session_id: str, body: SendMessageRequest,
             session_id=session_id, text=text, user_context=ctx,
             user_message_id=body.message.id,
             client_trace_id=body.context.clientTraceId,
+            assistant_message_id=body.context.assistantMessageId,
         ):
             # 前端 transport.js 只解析 data: 行,事件类型在 JSON 的 type 字段内
             yield {"data": json.dumps(event, ensure_ascii=False)}

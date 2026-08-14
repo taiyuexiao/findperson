@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class DepartmentBrief(BaseModel):
@@ -18,7 +18,8 @@ class PersonResponse(BaseModel):
     phone: str | None = None
     system_role: str
     department_id: int | None = None
-    department: DepartmentBrief | None = None
+    # 前端以字符串消费部门(与 auth/me 返回一致);ORM Department 对象在 validator 中转 name
+    department: str | None = None
     role: str | None = None
     contact: str | None = None
     domains: list | None = None
@@ -30,6 +31,13 @@ class PersonResponse(BaseModel):
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("department", mode="before")
+    @classmethod
+    def _dept_to_name(cls, v):
+        if v is None or isinstance(v, str):
+            return v
+        return getattr(v, "name", None)
 
 
 class PersonUpdateRequest(BaseModel):

@@ -103,12 +103,14 @@ class AguiService:
         user_context: UserContext,
         user_message_id: str = "",
         client_trace_id: str = "",
+        assistant_message_id: str = "",
     ) -> AsyncIterator[dict]:
         """执行一轮问答,按序产出 AG-UI 事件。"""
         ids = {
             "sessionId": session_id,
             "runId": uuid.uuid4().hex,
-            "messageId": f"msg-a-{uuid.uuid4().hex[:12]}",
+            # 优先使用前端本地生成的助手消息 ID,保证前端事件归属匹配(§3.3)
+            "messageId": assistant_message_id or f"msg-a-{uuid.uuid4().hex[:12]}",
         }
         trace_id = new_trace_id()
         state = AgentState(request=RequestState(
@@ -196,6 +198,7 @@ class AguiService:
     async def _build_recommendation_cards(self, final: AgentState) -> list[dict]:
         ranked = final.ranking.ranked_candidates[:MAX_CARDS]
         persons = await self._load_persons([c["person_id"] for c in ranked])
+        related_map = await self._load_related_contents([c["person_id"] for c in ranked])
         cards = []
         for index, c in enumerate(ranked):
             pid = c["person_id"]
@@ -207,7 +210,7 @@ class AguiService:
                 "person": persons.get(pid, {"id": pid, "name": pid}),
                 "personId": pid,
                 "reasons": _build_reasons(c),
-                "related": [],
+                "related": related_map.get(pid, []),
             })
         return cards
 
@@ -220,6 +223,24 @@ class AguiService:
             person_ids)
         return {r["id"]: {"id": r["id"], "name": r["name"], "department": r["department"],
                           "role": r["role"], "contact": r["contact"]} for r in rows}
+
+    @staticmethod
+    async def _load_related_contents(person_ids: list[str]) -> dict[str, list[dict]]:
+        """候选人已发布内容(卡片「相关发布内容」;人员详情/内容详情跳转用)。"""
+        if not person_ids:
+            return {}
+        # 每人至多 3 条(按创建时间倒序)
+        rows2 = await db.fetch(
+            "SELECT owner_id, id, title, rank FROM ("
+            "  SELECT owner_id, id, title,"
+            "         row_number() OVER (PARTITION BY owner_id ORDER BY created_at DESC) AS rank"
+            "  FROM public.contents WHERE owner_id = ANY($1) AND status = 'published'"
+            ") t WHERE rank <= 3",
+            person_ids)
+        result = {}
+        for r in rows2:
+            result.setdefault(r["owner_id"], []).append({"id": r["id"], "title": r["title"]})
+        return result
 
     @staticmethod
     async def _log_recommendation(final: AgentState, *, ids: dict, trace_id: str,

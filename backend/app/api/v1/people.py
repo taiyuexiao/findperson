@@ -16,7 +16,7 @@ def list_people(
     domain: str | None = None,
     active: bool = True,
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=100),
+    page_size: int = Query(100, ge=1, le=500),  # 名片库/详情一次性拉全量(当前数据量级 252)
     db: Session = Depends(get_db),
 ):
     q = db.query(User)
