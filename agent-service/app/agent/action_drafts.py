@@ -37,10 +37,14 @@ SUBMIT_TARGETS = {
 }
 
 # 资料字段中文名(changes 展示用)
+# 注意:键名必须落前端确认白名单(auth store updateProfile):contact/addDomains/selfPortrait
 FIELD_LABELS = {
-    "contact": "联系方式", "phone": "手机号", "role": "岗位",
-    "domains": "负责领域", "selfPortrait": "自画像", "name": "姓名",
+    "contact": "联系方式", "addDomains": "负责领域", "selfPortrait": "自画像",
 }
+
+# LLM/规则提取键 → 前端可维护键(不在白名单内的键确认时会被前端丢弃)
+_PATCH_KEY_MAP = {"phone": "contact", "domains": "addDomains"}
+_PATCH_DROP_KEYS = {"role", "name", "phone", "domains"}  # role/name 非本人可维护项
 
 _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问责任平台执行一个写操作,动作类型为 {action_type}。
 从用户的话里提取草稿字段,提取不到就留空,严禁编造。
@@ -138,6 +142,19 @@ class ActionDraftService:
                 action_type=ACTION_PROFILE,
                 reply_text=("请告诉我您要更新哪项资料(联系方式/负责领域/自画像/岗位)以及新内容,"
                             "例如『把我的负责领域更新为 RAG、知识检索』。"),
+                missing=["nextProfilePatch"])
+        # 键名归一:phone→contact、domains→addDomains;剔除前端不可维护字段
+        normalized: dict = {}
+        for key, value in patch.items():
+            mapped = _PATCH_KEY_MAP.get(key, key)
+            if mapped in FIELD_LABELS and mapped not in normalized:
+                normalized[mapped] = value
+        patch = normalized
+        if not patch:
+            return ActionDraftResult(
+                action_type=ACTION_PROFILE,
+                reply_text=("识别到的字段不在本人可维护范围(联系方式/负责领域/自画像),"
+                            "岗位/姓名等请联系管理员变更。"),
                 missing=["nextProfilePatch"])
         changes = [f"{FIELD_LABELS.get(k, k)}将更新为 {('、'.join(v) if isinstance(v, list) else v)}"
                    for k, v in patch.items()]
