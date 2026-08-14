@@ -97,6 +97,10 @@ class ActionDraftService:
             return ACTION_PROFILE
         if re.search(r"(我的|个人)(资料|联系方式|电话|负责领域|自画像|岗位)", q):
             return ACTION_PROFILE
+        # 「(我的)电话/联系方式/领域/画像/岗位 + 改为/是/为/换成 X」(可省略主语与动词)
+        if re.search(r"(联系方式|联系电话|电话|手机号|手机|邮箱|负责领域|自画像|岗位)"
+                     r"[^0-9一-鿿]{0,4}(改为|改成|变为|变成|换成|更新为|是|为)", q):
+            return ACTION_PROFILE
         # 「我现在/目前负责 X」→ 负责领域变更(核心业务流程 §二 原话用例)
         if re.search(r"我(现在|目前|如今)?负责", q):
             return ACTION_PROFILE
