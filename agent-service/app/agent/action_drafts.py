@@ -36,6 +36,12 @@ SUBMIT_TARGETS = {
     ACTION_CONTENT: "/api/v1/contents",
 }
 
+# 资料字段中文名(changes 展示用)
+FIELD_LABELS = {
+    "contact": "联系方式", "phone": "手机号", "role": "岗位",
+    "domains": "负责领域", "selfPortrait": "自画像", "name": "姓名",
+}
+
 _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问责任平台执行一个写操作,动作类型为 {action_type}。
 从用户的话里提取草稿字段,提取不到就留空,严禁编造。
 
@@ -123,8 +129,8 @@ class ActionDraftService:
         patch = {k: v for k, v in (extracted.get("nextProfilePatch") or {}).items()
                  if v not in (None, "", [])}
         if not patch:
-            # 规则兑底:「联系方式/电话为 X」
-            m = re.search(r"(?:联系方式|电话|手机)(?:为|是|改成|改为)?[:：]?\s*([0-9][0-9\-]{3,})", query)
+            # 规则兑底:「电话/联系方式 ... X」(兼容 改为/修改为/是 等说法)
+            m = re.search(r"(?:联系方式|电话|手机)[^0-9]{0,6}([0-9][0-9\-]{3,})", query)
             if m:
                 patch = {"contact": m.group(1)}
         if not patch:
@@ -133,9 +139,14 @@ class ActionDraftService:
                 reply_text=("请告诉我您要更新哪项资料(联系方式/负责领域/自画像/岗位)以及新内容,"
                             "例如『把我的负责领域更新为 RAG、知识检索』。"),
                 missing=["nextProfilePatch"])
+        changes = [f"{FIELD_LABELS.get(k, k)}将更新为 {('、'.join(v) if isinstance(v, list) else v)}"
+                   for k, v in patch.items()]
         card = self._card(ACTION_PROFILE, run_id, {
             "type": ACTION_PROFILE,
             "draftId": f"draft-{run_id}",
+            "title": "检测到资料维护需求",
+            "description": "识别到你要更新本人资料,确认后仅更新你可维护的字段。",
+            "changes": changes,
             "nextProfilePatch": patch,
         }, summary=f"更新资料:{ '、'.join(patch.keys()) }")
         return ActionDraftResult(
@@ -167,10 +178,15 @@ class ActionDraftService:
         card = self._card(ACTION_REVIEW, run_id, {
             "type": ACTION_REVIEW,
             "draftId": f"draft-{run_id}",
+            "title": "为你生成一条待确认评价",
+            "description": f"评价对象:{person_name};确认保存后写入其画像。",
+            "changes": [f"评价对象:{person_name}", f"事项:{tag or '(待补充)'}",
+                        f"日期:{date.today().isoformat()}"],
             "nextReview": {
                 "personName": person_name,
                 "personId": names.get(person_name, ""),
                 "tag": tag,
+                "text": tag,  # 前端评价卡渲染 nextReview.text
                 "date": date.today().isoformat(),
             },
         }, summary=f"为 {person_name} 添加事项:{tag or '(待补充)'}")
@@ -207,6 +223,11 @@ class ActionDraftService:
         card = self._card(ACTION_CONTENT, run_id, {
             "type": ACTION_CONTENT,
             "draftId": f"draft-{run_id}",
+            "title": "已整理内容发布草稿",
+            "description": "确认发布后进入待审核状态,审核通过前不会对外公开。",
+            "changes": [f"标题:{title}"]
+                       + ([f"关联领域:{'、'.join(tags)}"] if tags else [])
+                       + ([f"摘要:{summary[:40]}"] if summary else []),
             "nextContent": {"title": title, "tags": tags,
                             "summary": summary, "body": body or summary},
         }, summary=f"发布内容:{title}")
