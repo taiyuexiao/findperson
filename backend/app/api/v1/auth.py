@@ -1,5 +1,5 @@
 """认证路由：登录 / 注册 / 改密"""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
@@ -58,8 +58,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/change-password", summary="Change Password", description="修改自己的密码")
-def change_password(body: ChangePasswordRequest, db: Session = Depends(get_db)):
-    # 由 middleware 注入 user_id → 这里需要查当前用户
-    # 简化实现：通过 deps 拿到 user
+def change_password(body: ChangePasswordRequest, request: Request, db: Session = Depends(get_db)):
     from ...middleware.deps import get_current_user
-    return {"message": "ok"}
+    user = get_current_user(request, db)
+    if not verify_password(body.old_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="原密码不正确")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"message": "密码已修改"}

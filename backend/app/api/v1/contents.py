@@ -6,7 +6,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
-from ...middleware.deps import get_current_user
+from ...middleware.deps import get_current_user, require_admin
 from ...models.content import Content
 from ...models.user import User
 from ...schemas.contents import (
@@ -14,6 +14,12 @@ from ...schemas.contents import (
     ContentUpdateRequest,
     ContentAuditRequest,
     ContentResponse,
+)
+from ...services.publish_event import (
+    emit_publish_event,
+    CONTENT_PUBLISHED,
+    CONTENT_CHANGED,
+    CONTENT_DELETED,
 )
 
 router = APIRouter(prefix="/contents", tags=["内容"])
@@ -73,7 +79,7 @@ def list_contents(
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Content).filter(Content.is_deleted == False)
+    q = db.query(Content).filter(Content.deleted_at.is_(None))
     if status_q:
         q = q.filter(Content.status == status_q)
     if owner_id:
@@ -120,7 +126,7 @@ def create_content(
 
 @router.get("/{content_id}", response_model=ContentResponse, summary="Get Content", description="内容详情")
 def get_content(content_id: str, db: Session = Depends(get_db)):
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
     return _content_to_response(content)
@@ -134,7 +140,7 @@ def update_content(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
 
@@ -160,6 +166,9 @@ def update_content(
         setattr(content, key, value)
 
     content.version += 1
+    # P5：已发布内容被编辑 → 发 RAG 重新索引事件
+    if content.status == "published":
+        emit_publish_event(db, CONTENT_CHANGED, content.id, getattr(request.state, "user_id", None))
     db.commit()
     db.refresh(content)
     return _content_to_response(content)
@@ -168,12 +177,15 @@ def update_content(
 @router.delete("/{content_id}", summary="Delete Content", description="软删除内容")
 def delete_content(content_id: str, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
     if content.owner_id != user.id and user.system_role != "管理员":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
-    content.is_deleted = True
+    # P5：删除已发布内容 → 发 RAG 重新索引事件
+    if content.status == "published":
+        emit_publish_event(db, CONTENT_DELETED, content.id, user.id)
+    content.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"message": "已删除"}
 
@@ -181,9 +193,11 @@ def delete_content(content_id: str, request: Request, db: Session = Depends(get_
 @router.post("/{content_id}/submit", response_model=ContentResponse, summary="Submit Content", description="提交审核")
 def submit_content(content_id: str, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
+    if content.owner_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权操作")
     content.status = "pending_review"
     content.submitted_at = datetime.now(timezone.utc)
     db.commit()
@@ -199,7 +213,8 @@ def audit_content(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    require_admin(request)
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
 
@@ -221,6 +236,8 @@ def audit_content(
     if new_status == "published":
         content.published_at = beijing_now.date()
         content.version += 1
+        # P5：审核通过发布 → 发 RAG 重新索引事件
+        emit_publish_event(db, CONTENT_PUBLISHED, content.id, user.id)
 
     db.commit()
     db.refresh(content)
@@ -230,7 +247,8 @@ def audit_content(
 @router.post("/{content_id}/pin", response_model=ContentResponse, summary="Toggle Pin", description="切换置顶状态")
 def toggle_pin(content_id: str, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
+    require_admin(request)
+    content = db.query(Content).filter(Content.id == content_id, Content.deleted_at.is_(None)).first()
     if not content:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="内容不存在")
     content.pinned = not content.pinned

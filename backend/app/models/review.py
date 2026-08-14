@@ -13,6 +13,7 @@ class PeerReview(Base):
     id = Column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex[:12])
     person_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     reviewer_id = Column(String(32), ForeignKey("users.id"), nullable=False)
+    reviewer_name = Column(String(64), nullable=True)  # DB 已有列，模型补齐
     tag_name = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

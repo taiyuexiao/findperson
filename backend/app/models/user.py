@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
@@ -24,15 +24,18 @@ class User(Base):
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
     role = Column(String(128), nullable=True)
     contact = Column(String(64), nullable=True)
-    domains = Column(ARRAY(String), nullable=True)
+    domains = Column(JSONB, nullable=True)  # DB 实际为 jsonb（原 ARRAY(String) 与 DDL 不符）
     self_portrait = Column(Text, nullable=True)
     completeness = Column(Integer, default=0)
     recommended_count = Column(Integer, default=0)
     active = Column(Boolean, default=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
 
-    department = relationship("Department", back_populates="members", lazy="joined")
+    department = relationship("Department", back_populates="members", lazy="joined",
+                              foreign_keys=[department_id])
     contents = relationship("Content", back_populates="owner", lazy="dynamic")
     sent_reviews = relationship("PeerReview", back_populates="reviewer_user", lazy="dynamic",
                                 foreign_keys="PeerReview.reviewer_id")

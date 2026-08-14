@@ -18,8 +18,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-def require_admin(request: Request):
-    """要求管理员角色"""
+def get_role_type(request: Request) -> str:
+    """归一化角色类型：管理员 → admin，其余 → user（P3 ADM-01）"""
     role = getattr(request.state, "user_role", "")
-    if role != "管理员":
+    return "admin" if role == "管理员" else "user"
+
+
+def require_admin(request: Request):
+    """要求管理员角色（未登录 401，非管理员 403）"""
+    if not getattr(request.state, "user_id", None):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    if get_role_type(request) != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")

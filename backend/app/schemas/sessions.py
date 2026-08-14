@@ -16,6 +16,21 @@ class SessionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SessionCreateRequest(BaseModel):
+    """新建会话（前端传 camelCase：id/title/turnCount/summary，updatedAt 忽略）"""
+    id: str | None = None
+    title: str = "新对话"
+    summary: str = ""
+    turnCount: int = 0
+
+
+class SessionUpdateRequest(BaseModel):
+    """更新会话（重命名 / 摘要 / 轮次，camelCase）"""
+    title: str | None = None
+    summary: str | None = None
+    turnCount: int | None = None
+
+
 class MessageResponse(BaseModel):
     """消息记录"""
     id: str
