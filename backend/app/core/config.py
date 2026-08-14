@@ -9,9 +9,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174"
     BCRYPT_ROUNDS: int = 12
 
+    AGENT_SERVICE_URL: str = "http://127.0.0.1:8100"  # AGUI 事件代理转发目标(integration)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()

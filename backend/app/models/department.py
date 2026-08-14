@@ -19,5 +19,7 @@ class Department(Base):
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    members = relationship("User", back_populates="department", lazy="dynamic")
+    # 与 users 存在两条 FK 路径(users.department_id / leader_id),显式指定 members 走 department_id
+    members = relationship("User", back_populates="department", lazy="dynamic",
+                           foreign_keys="User.department_id")
     children = relationship("Department", backref="parent", remote_side=[id], lazy="joined")

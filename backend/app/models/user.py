@@ -32,7 +32,9 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    department = relationship("Department", back_populates="members", lazy="joined")
+    # 与 departments 存在两条 FK 路径(department_id / departments.leader_id),必须显式指定
+    department = relationship("Department", back_populates="members", lazy="joined",
+                              foreign_keys=[department_id])
     contents = relationship("Content", back_populates="owner", lazy="dynamic")
     sent_reviews = relationship("PeerReview", back_populates="reviewer_user", lazy="dynamic",
                                 foreign_keys="PeerReview.reviewer_id")
