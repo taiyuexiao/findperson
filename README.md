@@ -19,7 +19,7 @@ pip install -r requirements.txt
 # 3. 启动数据库（PostgreSQL 17 + pgvector）
 docker compose up -d
 
-# 4. 数据库迁移（alembic：baseline → P3 → P5 → agent 兼容视图）
+# 4. 数据库迁移
 alembic upgrade head
 
 # 5. 种子数据
@@ -83,7 +83,7 @@ backend/
 ├── requirements.txt
 └── .env.example
 
-alembic/                      # 数据库迁移（baseline → P3 → P5 → agent 兼容）
+alembic/                      # 数据库迁移
 ├── versions/
 │   ├── 64c9fe23ca1b_initial_baseline.py
 │   ├── c1d2e3f4a5b6_p3_admin_tables.py
@@ -191,9 +191,9 @@ scripts/                     # 种子数据生成 / seed.sql
 
 ---
 
-## 本次新增功能（P3 之后 + RAG / Agent 相关）
+## 本次新增功能
 
-### 1. 管理后台与统计（P3 ADM-05/06）
+### 1. 管理后台与统计
 
 - **统计口径刷新**：`statistics_definitions`（口径 SQL，仅允许 `SELECT`）+ `statistics_data`（结果快照）。
   - `core/statistics.py`：遍历口径执行 formula，逐条容错（单个口径失败不阻塞）。
@@ -217,7 +217,7 @@ scripts/                     # 种子数据生成 / seed.sql
 - **当前前端直连 Agent**（`VITE_AGUI_BASE_URL` 指向 agent），后端 `/api/agui/*` 仅作 Agent 未接入时的降级兜底（返回「智能问答服务暂未接入，请稍后重试。」）。
 - 业务落库：`recommendation_logs`（一行一个被推荐人）、`feedback`（赞踩三态）。
 
-### 5. 发布事件信号（P5，RAG 重新索引）
+### 5. 发布事件信号
 
 - `rag.publish_events` 表 + `services/publish_event.py`：内容在「审核通过发布 / 编辑已发布 / 删除已发布」时写一条 `pending` 事件，供 RAG 服务消费后触发 `generate-from-db` + `index` 重新索引。后端只发信号，不重复实现切片/向量化/入库。
 
@@ -346,7 +346,7 @@ rag 其余表结构差异（`rag_documents`/`rag_chunks`/`rag_index_jobs` 的两
 | 项目 | 说明 |
 |------|------|
 | 数据库 | PostgreSQL 17 + pgvector（`swzr-pg`，见 `docker-compose.yml`） |
-| 迁移 | `alembic upgrade head`（baseline → P3 → P5 → agent 兼容） |
+| 迁移 | `alembic upgrade head` |
 | 用户 | `swzr_admin` / `swzr_dev_2026` |
 | Schema | `public`（业务）/ `agent`（概念等）/ `rag`（索引 + `publish_events` + `rag_index_pointer`） |
 | 人员 | 300 人（P0001~P0300） |
