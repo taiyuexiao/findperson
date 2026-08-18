@@ -26,6 +26,7 @@ class User(Base):
     contact = Column(String(64), nullable=True)
     domains = Column(ARRAY(String), nullable=True)
     self_portrait = Column(Text, nullable=True)
+    manager_id = Column(String(32), nullable=True)  # 直接上级(users 自引用,树状汇报关系)
     completeness = Column(Integer, default=0)
     recommended_count = Column(Integer, default=0)
     active = Column(Boolean, default=True)

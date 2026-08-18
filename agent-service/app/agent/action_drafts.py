@@ -89,6 +89,15 @@ class ActionDraftService:
     def classify(query: str) -> str | None:
         """确定性规则分类(优先级:他人画像 > 内容发布 > 资料维护);不命中返回 None。"""
         q = query.strip()
+        # 「修改/更新 我的(自|字)画像 为 X」→ 本人自画像(profile),优先于他人画像规则
+        if "我" in q and re.search(r"(修改|更新|维护|完善|填写|改).{0,8}(自画像|字画像|画像)", q):
+            return ACTION_PROFILE
+        # 「给/为/帮 我自己/本人 添加X标签/领域」→ 本人负责领域(profile),不进他人画像
+        if re.search(r"(为|给|帮)?(我自己|本人|我).{0,4}(添加|增加|加|补).{0,8}(标签|领域)", q):
+            return ACTION_PROFILE
+        # 「给/为/帮 XX 添加/增加/加 标签(或评价/画像)」→ 他人画像
+        if re.search(r"(为|给|帮).{1,8}(添加|增加|加|写|补).{0,4}(标签|评价|画像)", q):
+            return ACTION_REVIEW
         if re.search(r"(评价|画像|点评|打标签|写标签)", q) and re.search(r"(为|给|帮)?[^我].{0,8}(评价|画像|点评)", q):
             return ACTION_REVIEW
         if re.search(r"(发布|发一?篇|投稿|写一?篇|发内容|发文章)", q):
@@ -150,6 +159,16 @@ class ActionDraftService:
             if m:
                 patch = {"addDomains": [m.group(1).strip()]}
         if not patch:
+            # 规则兑底 3:「(给我自己)添加/增加 X 标签/领域」→ 负责领域新增
+            m = re.search(r"(?:添加|增加|加|补充)(?:一?个|一条)?([^,，。！？!?]{1,20}?)(?:标签|领域)", query)
+            if m:
+                patch = {"addDomains": [m.group(1).strip()]}
+        if not patch:
+            # 规则兑底 4:「(自|字)画像 改为/是/为 X」→ 自画像更新
+            m = re.search(r"(?:自画像|字画像|画像)[^,，。！？!?]{0,4}(?:改为|改成|更新为|变为|是|为)([^,，。！？!?]{1,50})", query)
+            if m:
+                patch = {"selfPortrait": m.group(1).strip()}
+        if not patch:
             return ActionDraftResult(
                 action_type=ACTION_PROFILE,
                 reply_text=("请告诉我您要更新哪项资料(联系方式/负责领域/自画像/岗位)以及新内容,"
@@ -190,7 +209,7 @@ class ActionDraftService:
         tag = str(extracted.get("tag") or "").strip()[:REVIEW_TAG_MAX_LEN]
         if not tag:
             # 规则兑底:「评价:事项」「画像:事项」
-            m = re.search(r"(?:评价|画像|点评)[:：]([^,，。！？!?]{1,20})", query)
+            m = re.search(r"(?:评价|画像|点评|标签)[:：]([^,，。！？!?]{1,20})", query)
             if m:
                 tag = m.group(1).strip()[:REVIEW_TAG_MAX_LEN]
         if not person_name:

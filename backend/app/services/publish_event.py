@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 CONTENT_PUBLISHED = "content_published"
 CONTENT_CHANGED = "content_changed"
 CONTENT_DELETED = "content_deleted"
+PERSON_CHANGED = "person_changed"  # 资料/负责领域/画像变更,resource_id=人员ID
 
 
 def emit_publish_event(

@@ -9,12 +9,7 @@
         v-for="card in cards"
         :key="card.id"
         :card="card"
-        :feedback="feedback"
-        :feedback-key="`person:${messageId}:${card.personId}`"
-        @detail="$emit('detail', $event)"
-        @content="$emit('content', $event)"
         @profile="$emit('profile', $event)"
-        @toggle-feedback="(...args) => $emit('toggle-feedback', ...args)"
       />
     </div>
   </div>
@@ -25,8 +20,6 @@ import RecommendationCard from "./RecommendationCard.vue";
 
 defineProps({
   cards: { type: Array, required: true },
-  feedback: { type: Object, required: true },
-  messageId: { type: String, required: true },
 });
-defineEmits(["detail", "content", "profile", "toggle-feedback"]);
+defineEmits(["profile"]);
 </script>

@@ -51,22 +51,42 @@
       <button class="primary-button small-button" @click="$emit('content', detail.contentId)">查看详情页</button>
     </template>
 
-    <!-- ── 内容发布草稿 ── -->
+    <!-- ── 内容发布草稿(可直接修改) ── -->
     <template v-else-if="detail.type === 'contentDraft'">
       <div class="detail-panel-top">
         <div class="detail-panel-label">内容发布草稿</div>
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
       <div class="detail-card">
-        <h2>{{ detail.draft?.title || '未命名草稿' }}</h2>
-        <p>{{ detail.draft?.tags?.join('、') || '未设置标签' }}</p>
-        <p>{{ detail.draft?.summary || '暂无摘要' }}</p>
-      </div>
-      <div class="field-row">
-        <span v-for="tag in (detail.draft?.tags || [])" :key="tag" class="tag">{{ tag }}</span>
+        <h3>标题</h3>
+        <input class="detail-edit-input" :value="detail.draft?.title" @input="updateDraftField('title', $event.target.value)" />
+        <h3>标签(顿号分隔)</h3>
+        <input class="detail-edit-input" :value="(detail.draft?.tags || []).join('、')" @input="updateDraftField('tags', $event.target.value)" />
+        <h3>摘要</h3>
+        <textarea class="detail-edit-input" rows="3" :value="detail.draft?.summary" @input="updateDraftField('summary', $event.target.value)"></textarea>
       </div>
       <div class="thread-card-actions">
-        <button class="secondary-button small-button" @click="$emit('mine')">去我的主页</button>
+        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmContent')">确认发布</button>
+        <button class="secondary-button small-button" @click="$emit('mine')">去发布页继续编辑</button>
+      </div>
+    </template>
+
+    <!-- ── 他人画像/评价草稿(可直接修改) ── -->
+    <template v-else-if="detail.type === 'reviewAction'">
+      <div class="detail-panel-top">
+        <div class="detail-panel-label">为他人画像</div>
+        <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
+      </div>
+      <div class="detail-card">
+        <h2>为 {{ detail.action?.nextReview?.personName || '同事' }} 画像</h2>
+        <h3>能力标签</h3>
+        <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" />
+        <h3>评价内容</h3>
+        <textarea class="detail-edit-input" rows="4" :value="detail.action?.nextReview?.text" @input="updateReviewField('text', $event.target.value)"></textarea>
+      </div>
+      <div class="thread-card-actions">
+        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存评价</button>
+        <button class="secondary-button small-button" @click="$emit('mine')">去评价页修改</button>
       </div>
     </template>
 
@@ -77,10 +97,14 @@
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
       <div class="detail-card">
-        <h2>{{ detail.action?.confirmed ? '资料维护已完成' : '待更新字段' }}</h2>
-        <div v-if="detail.action?.changes?.length" class="action-preview">
-          <span v-for="item in detail.action.changes" :key="item">{{ item }}</span>
-        </div>
+        <h2>{{ detail.action?.confirmed ? '资料维护已完成' : '待更新字段(可直接修改)' }}</h2>
+        <template v-if="profilePatchEntries.length">
+          <label v-for="entry in profilePatchEntries" :key="entry.key" class="detail-edit-field">
+            <span>{{ entry.label }}</span>
+            <textarea v-if="entry.key === 'selfPortrait'" class="detail-edit-input" rows="3" :value="entry.text" @input="updateProfileField(entry.key, $event.target.value)"></textarea>
+            <input v-else class="detail-edit-input" :value="entry.text" @input="updateProfileField(entry.key, $event.target.value)" />
+          </label>
+        </template>
         <p v-else>暂未识别到完整字段，可进入个人中心手动补充。</p>
       </div>
       <div v-if="profileUser" class="detail-card">
@@ -130,7 +154,7 @@ const props = defineProps({
   /** 当前登录用户 ID */
   currentUserId: String,
 });
-defineEmits(['close', 'profile', 'content', 'mine', 'confirmProfile', 'toggleFeedback']);
+defineEmits(['close', 'profile', 'content', 'mine', 'confirmProfile', 'confirmContent', 'confirmReview', 'toggleFeedback']);
 
 // ── 查找工具 ──
 const personOf = (id) => props.people.find((item) => item.id === id);
@@ -147,4 +171,64 @@ const personRelated = computed(() => {
 
 const profileUser = computed(() => personOf(props.currentUserId));
 const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
+
+// ── 侧边栏直接修改(改动写回卡片 action,确认时生效) ──
+const PROFILE_FIELD_LABELS = {
+  contact: '联系方式',
+  addDomains: '负责领域(新增,顿号分隔)',
+  domainsText: '负责领域',
+  selfPortrait: '自画像',
+};
+const profilePatchEntries = computed(() => {
+  const patch = props.detail?.action?.nextProfilePatch || {};
+  return Object.entries(patch).map(([key, value]) => ({
+    key,
+    label: PROFILE_FIELD_LABELS[key] || key,
+    text: Array.isArray(value) ? value.join('、') : String(value ?? ''),
+  }));
+});
+const splitList = (text) => text.split(/[、,，]/).map((s) => s.trim()).filter(Boolean);
+function updateProfileField(key, text) {
+  const patch = props.detail?.action?.nextProfilePatch;
+  if (!patch) return;
+  patch[key] = Array.isArray(patch[key]) ? splitList(text) : text;
+}
+function updateDraftField(key, text) {
+  const draft = props.detail?.draft;
+  if (!draft) return;
+  draft[key] = key === 'tags' ? splitList(text) : text;
+}
+function updateReviewField(key, text) {
+  const review = props.detail?.action?.nextReview;
+  if (!review) return;
+  review[key] = text;
+}
 </script>
+
+<style scoped>
+/* 侧边栏直接修改输入框(与全局卡片风格一致的轻量样式) */
+.detail-edit-field {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.detail-edit-field > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary, #666);
+}
+.detail-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color, #dcdfe6);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.detail-card h3 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+</style>

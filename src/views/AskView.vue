@@ -35,27 +35,17 @@
               <div class="chat-entry-title">开始对话</div>
             </div>
           </div>
-          <div class="chat-thread-panel">
+          <div ref="threadPanel" class="chat-thread-panel">
             <ThreadList>
               <ThreadTurn v-for="turn in turns" :key="turn.user.id">
                 <article class="thread-bubble user-bubble">
                   <p>{{ turn.user.text }}</p>
                 </article>
-                <AssistantBubble
-                  :message="turn.assistant"
-                  :feedback="feedback.feedbackMap"
-                  :target-key="`answer:${turn.assistant.id}`"
-                  @toggle-feedback="toggleFeedback"
-                />
+                <AssistantBubble :message="turn.assistant" />
 
                 <RecommendationCardGroup
                   :cards="recommendationCards(turn.assistant.id)"
-                  :feedback="feedback.feedbackMap"
-                  :message-id="turn.assistant.id"
-                  @detail="(personId) => agui.openPersonDetail(personId, { sessionId: sessions.activeSessionId, messageId: turn.assistant.id })"
-                  @content="(contentId) => agui.openContentDetail(contentId, { source: 'ask' })"
                   @profile="openProfile"
-                  @toggle-feedback="toggleFeedback"
                 />
 
                 <ActionCard
@@ -70,6 +60,15 @@
                   @profile="openProfile"
                   @content="openContentDetail"
                   @detail="agui.openActionDetail"
+                />
+
+                <!-- 回答级反馈(有帮助/没帮助)放在一轮对话末尾,点踩弹原因选项 -->
+                <AnswerFeedbackBar
+                  v-if="!turn.assistant.streaming && turn.assistant.text"
+                  :message="turn.assistant"
+                  :question="turn.user.text"
+                  :candidates="candidateNames(turn.assistant.id)"
+                  :session-id="sessions.activeSessionId"
                 />
               </ThreadTurn>
             </ThreadList>
@@ -91,6 +90,8 @@
         @content="openContentDetail"
         @mine="continueDetailAction"
         @confirm-profile="confirmProfileFromDetail"
+        @confirm-content="confirmCardFromDetail"
+        @confirm-review="confirmCardFromDetail"
         @toggle-feedback="toggleFeedback"
       />
     </div>
@@ -98,11 +99,12 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { Memo } from "@element-plus/icons-vue";
 import ActionCard from "../components/ask/ActionCard.vue";
+import AnswerFeedbackBar from "../components/ask/AnswerFeedbackBar.vue";
 import AssistantBubble from "../components/ask/AssistantBubble.vue";
 import ChatComposer from "../components/ask/ChatComposer.vue";
 import ConversationSidebar from "../components/ask/ConversationSidebar.vue";
@@ -130,8 +132,27 @@ const drafts = useDraftsStore();
 
 sessions.init();
 sessions.ensureActiveSession();
+// 进入问答页(含从其他页面切回):本地无缓存时从服务端回拉当前会话历史
+agui.loadSessionHistory(sessions.activeSessionId);
 
-const questionInput = ref("");
+// 新消息/流式更新后自动滚动到对话最新位置(发送问题后不再停留在原位置)
+const threadPanel = ref(null);
+function scrollThreadToBottom() {
+  nextTick(() => {
+    const el = threadPanel.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+watch(() => agui.activeMessages, () => scrollThreadToBottom(), { deep: true });
+watch(() => agui.cardsByMessage, () => scrollThreadToBottom(), { deep: true });
+onMounted(() => scrollThreadToBottom());
+
+// 输入框草稿存在 agui store(按会话):切页/刷新不丢,发送后清空
+const questionInput = computed({
+  get: () => agui.composerDrafts[sessions.activeSessionId] || "",
+  set: (value) => agui.setComposerDraft(sessions.activeSessionId, value),
+});
+// 历史对话搜索(main 分支标准:侧栏搜索按钮 + 弹层检索标题/摘要)
 const historySearch = ref("");
 const isHistorySearchOpen = ref(false);
 const searchedSessions = computed(() => sessions.searchSessions(historySearch.value));
@@ -154,6 +175,13 @@ function confirmationCards(messageId) {
   return (agui.cardsByMessage[messageId] || []).filter((card) => card.kind === "confirmation");
 }
 
+function candidateNames(messageId) {
+  // 推荐人选姓名列表(随反馈入库,后台可视化用)
+  return recommendationCards(messageId)
+    .map((card) => directory.getPerson(card.personId)?.name || card.person?.name || card.personId)
+    .filter(Boolean);
+}
+
 function newChat() {
   sessions.createOrReuseBlankSession();
 }
@@ -161,6 +189,7 @@ function newChat() {
 function selectSession(id) {
   sessions.selectSession(id);
   isHistorySearchOpen.value = false;
+  agui.loadSessionHistory(id);
 }
 
 async function handleSessionCommand(command, sessionId) {
@@ -185,6 +214,8 @@ async function sendQuestion() {
   if (!question) return;
   const session = sessions.ensureActiveSession();
   questionInput.value = "";
+  agui.setComposerDraft(session.id, "");
+  scrollThreadToBottom();
   await agui.sendMessage(session.id, question);
 }
 
@@ -201,6 +232,11 @@ function openContentDetail(contentId) {
 }
 
 function startPublishDraft(draft) {
+  // 已确认/已入库的内容:走编辑路径而非新建草稿(验收:继续编辑不应变新建)
+  if (draft?.id) {
+    router.push({ name: "publish", query: { id: draft.id, redirect: route.fullPath } });
+    return;
+  }
   const draftId = drafts.create("content", draft || {}, route.fullPath);
   router.push({
     name: "publish",
@@ -220,11 +256,17 @@ function continueActionDraft(action) {
 
 function continueDetailAction() {
   if (agui.activeDetail.type === "profileAction") continueActionDraft(agui.activeDetail.action || {});
+  else if (agui.activeDetail.type === "reviewAction") continueActionDraft(agui.activeDetail.action || {});
   else if (agui.activeDetail.type === "contentDraft") startPublishDraft(agui.activeDetail.draft);
   else router.push({ name: "mine", query: { redirect: route.fullPath } });
 }
 
 function confirmProfileFromDetail() {
+  const cardId = agui.activeDetail.cardId;
+  if (cardId) agui.confirmCard(cardId);
+}
+
+function confirmCardFromDetail() {
   const cardId = agui.activeDetail.cardId;
   if (cardId) agui.confirmCard(cardId);
 }

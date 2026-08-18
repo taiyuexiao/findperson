@@ -2,6 +2,7 @@
 
 当前(模块 01)仅提供 /health;后续模块依次挂载 /agent/chat(SSE)等路由。
 """
+import asyncio
 import os
 
 from fastapi import FastAPI
@@ -35,12 +36,20 @@ app.include_router(agui_router)
 
 @app.on_event("startup")
 async def _startup() -> None:
-    """应用启动:初始化 DB 连接池。"""
+    """应用启动:初始化 DB 连接池 + publish_events 消费轮询。"""
     await init_pool()
+    from app.rag.event_consumer import run_event_consumer
+    app.state.publish_event_stop = asyncio.Event()
+    app.state.publish_event_task = asyncio.create_task(
+        run_event_consumer(app.state.publish_event_stop))
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    if getattr(app.state, "publish_event_stop", None):
+        app.state.publish_event_stop.set()
+    if getattr(app.state, "publish_event_task", None):
+        app.state.publish_event_task.cancel()
     await close_pool()
 
 

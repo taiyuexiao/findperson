@@ -1,17 +1,33 @@
 import { normalizeAguiEvent } from "./normalizer.js";
 
+// 会话历史回拉(直连 agent-service;后端 /api/v1 无此路由)
+export async function fetchAguiSessionState(sessionId) {
+  const baseUrl = import.meta.env.VITE_AGUI_BASE_URL || "/api/agui";
+  const response = await fetch(`${baseUrl}/sessions/${sessionId}/state`, {
+    headers: { Accept: "application/json" },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`AGUI state request failed: ${response.status}`);
+  return response.json();
+}
+
 export async function* connectAguiStream({ sessionId, payload, signal, timeoutMs = 30000, retry = 1 }) {
   const baseUrl = import.meta.env.VITE_AGUI_BASE_URL || "/api/agui";
   const timeout = AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : null;
   const combinedSignal = signal || timeout;
   let lastError;
   for (let attempt = 0; attempt <= retry; attempt += 1) {
+    // 已开始收到事件后不再重发整个 POST(避免服务端重复落库同一消息)
+    let established = false;
     try {
-      yield* requestAguiStream({ baseUrl, sessionId, payload, signal: combinedSignal });
+      for await (const event of requestAguiStream({ baseUrl, sessionId, payload, signal: combinedSignal })) {
+        established = true;
+        yield event;
+      }
       return;
     } catch (error) {
       lastError = error;
-      if (attempt >= retry || error.name === "AbortError") break;
+      if (established || attempt >= retry || error.name === "AbortError") break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }

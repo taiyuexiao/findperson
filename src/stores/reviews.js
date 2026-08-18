@@ -31,7 +31,8 @@ export const useReviewsStore = defineStore("reviews", {
       if (!isServerMode()) saveMockReviews(this.reviews);
     },
     async loadReviews() {
-      if (this.loaded && !isServerMode()) return;
+      // 已加载过就直接复用(含 server 模式),避免每次导航重拉
+      if (this.loaded) return;
       this.reviews = isServerMode() ? await fetchSentReviews() : getMockReviews();
       this.loaded = true;
     },

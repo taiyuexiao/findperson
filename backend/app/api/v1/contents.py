@@ -6,7 +6,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
-from ...middleware.deps import get_current_user
+from ...middleware.deps import get_current_user, require_admin
 from ...models.content import Content
 from ...models.user import User
 from ...services.publish_event import (
@@ -224,6 +224,7 @@ def audit_content(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    require_admin(request)  # v4 §十:内容审核仅管理员
     user = get_current_user(request, db)
     content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
     if not content:
@@ -256,6 +257,7 @@ def audit_content(
 
 @router.post("/{content_id}/pin", response_model=ContentResponse, summary="Toggle Pin", description="切换置顶状态")
 def toggle_pin(content_id: str, request: Request, db: Session = Depends(get_db)):
+    require_admin(request)  # v4 §十:置顶仅管理员
     user = get_current_user(request, db)
     content = db.query(Content).filter(Content.id == content_id, Content.is_deleted == False).first()
     if not content:

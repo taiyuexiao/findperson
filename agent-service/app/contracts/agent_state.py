@@ -66,6 +66,8 @@ class RequestState(BaseModel):
     user_context: UserContext
     original_query: str
     normalized_query: str = ""
+    # 会话记忆:同会话最近 N 轮消息 [{role, text}],由接入层注入(agui/service.py、api_agent.py)
+    history: list[dict[str, str]] = Field(default_factory=list)
 
 
 class IntentState(BaseModel):
@@ -223,11 +225,11 @@ def _merge_retrieval(current, incoming) -> None:
 
 NODE_FIELD_MATRIX: dict[str, dict[str, list[str]]] = {
     "IntentNode": {
-        "reads": ["request.normalized_query", "request.session_id"],
+        "reads": ["request.normalized_query", "request.session_id", "request.history"],
         "writes": ["intent"],
     },
     "QueryStructurerNode": {
-        "reads": ["request.normalized_query", "intent"],
+        "reads": ["request.normalized_query", "intent", "request.history"],
         "writes": ["understanding"],
     },
     "ConceptLinkerNode": {

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.chain import build_orchestrator
+from app.agent.memory import load_history
 from app.contracts.agent_state import AgentState, RequestState, UserContext
 from app.contracts.errors import ErrorCode, auth_error, input_error
 from app.contracts.trace import new_trace_id
@@ -96,6 +97,8 @@ async def agent_chat(
             trace_id=ids["traceId"], run_id=ids["runId"], session_id=ids["sessionId"],
             user_context=user_context, original_query=query,
             normalized_query=" ".join(query.split()),
+            # 多轮记忆:显式传 session_id 时注入对话历史
+            history=await load_history(body.session_id) if body.session_id else [],
         )
     )
     state.trace.trace_id = ids["traceId"]

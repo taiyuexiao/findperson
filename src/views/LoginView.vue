@@ -8,13 +8,14 @@
           </span>
           <div>
             <h1>欢迎进入首问责任平台</h1>
-            <p>支持用户名或手机号 + 密码登录，进入后可体验问答、名片库、个人中心与运营看板。</p>
+            <p>支持用户名或手机号 + 密码登录。</p>
+            <p class="login-demo-hint">示例账号：123312312313　密码：123456</p>
           </div>
         </div>
         <el-form class="login-form" :model="form" @submit.prevent>
           <label>
             用户名/手机号
-            <el-input v-model="form.account" placeholder="例如：linzhixia / 13800001206" />
+            <el-input v-model="form.account" placeholder="请输入用户名或手机号" />
           </label>
           <label>
             密码
@@ -25,11 +26,6 @@
             <span role="status">{{ status }}</span>
           </div>
         </el-form>
-        <div class="login-tips">
-          <span>管理员：林知夏 / 13800001206</span>
-          <span>普通成员：王珂 / 13800001301</span>
-          <span>演示密码：123456</span>
-        </div>
       </div>
     </div>
   </section>

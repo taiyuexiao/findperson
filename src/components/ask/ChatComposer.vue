@@ -5,7 +5,7 @@
         <el-input
           :model-value="modelValue"
           type="textarea"
-          :autosize="{ minRows: 3, maxRows: 5 }"
+          :autosize="{ minRows: 1, maxRows: 5 }"
           placeholder="例如：我想申请大模型 Key，应该找谁？"
           @update:model-value="$emit('update:modelValue', $event)"
           @keydown.enter.exact.prevent="$emit('send')"

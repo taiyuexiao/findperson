@@ -21,6 +21,11 @@
       </el-tab-pane>
 
       <el-tab-pane label="内容审核" name="audit"><ContentAudit /></el-tab-pane>
+
+      <el-tab-pane label="推荐反馈" name="feedback">
+        <!-- v-if 保证每次切入该页签都重新挂载拉数,反馈明细实时反映最新入库记录 -->
+        <FeedbackPanel v-if="activeTab === 'feedback'" />
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="showMemberDialog" title="维护成员" width="520px">
@@ -50,18 +55,29 @@ import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import ActivityTrend from "../components/admin/ActivityTrend.vue";
 import ContentAudit from "../components/admin/ContentAudit.vue";
+import FeedbackPanel from "../components/admin/FeedbackPanel.vue";
 import MetricCard from "../components/admin/MetricCard.vue";
 import RankingList from "../components/admin/RankingList.vue";
 
 const admin = useAdminStore(); const content = useContentStore(); const directory = useDirectoryStore();
 const activeTab = ref("dashboard"); const showMemberDialog = ref(false); const showDepartmentDialog = ref(false); const memberForm = ref(null);
 const departmentForm = reactive({ name: "", parentId: "", responsibility: "" });
-onMounted(() => admin.loadAdminData()); watch(() => admin.activeWeek, () => admin.loadAdminData());
+onMounted(() => { admin.loadAdminData(); directory.loadPeople(); }); watch(() => admin.activeWeek, () => admin.loadAdminData());
 function editMember(person) { memberForm.value = { ...person, isLeader: directory.isDepartmentLeader(person.id, person.department) }; showMemberDialog.value = true; }
 function addMember() { memberForm.value = { id: "", name: "", department: directory.departments[0]?.name || "", role: "专员", systemRole: "普通成员", active: true, isLeader: false }; showMemberDialog.value = true; }
 function openDepartmentDialog() { Object.assign(departmentForm, { name: "", parentId: "", responsibility: "" }); showDepartmentDialog.value = true; }
-function saveDepartment() { if (!departmentForm.name.trim()) return ElMessage.warning("请输入部门名称"); const department = directory.addDepartment(departmentForm); if (!department) return ElMessage.warning("同级部门名称不能重复"); memberForm.value.department = department.name; showDepartmentDialog.value = false; }
-function saveMember() {
+async function saveDepartment() {
+  if (!departmentForm.name.trim()) return ElMessage.warning("请输入部门名称");
+  try {
+    const department = await directory.addDepartment(departmentForm);
+    if (!department) return ElMessage.warning("同级部门名称不能重复");
+    memberForm.value.department = department.name;
+    showDepartmentDialog.value = false;
+  } catch (error) {
+    ElMessage.error(error.message || "部门创建失败");
+  }
+}
+async function saveMember() {
   if (!memberForm.value.name?.trim()) return ElMessage.warning("请输入成员姓名");
   if (!memberForm.value.department) return ElMessage.warning("请选择所属部门");
   if (!memberForm.value.role?.trim()) return ElMessage.warning("请选择或填写职务");
@@ -69,11 +85,16 @@ function saveMember() {
   const existing = id ? directory.getPerson(id) : null;
   const oldDepartment = existing?.department;
   const wasLeader = existing && directory.isDepartmentLeader(existing.id, oldDepartment);
-  const person = id ? directory.updatePerson(id, patch) : directory.addPerson(patch);
-  if (!person) return;
-  directory.addRole(patch.role);
-  if (wasLeader && (!isLeader || oldDepartment !== patch.department)) directory.assignDepartmentLeader(directory.getDepartment(oldDepartment)?.id, "");
-  if (isLeader) directory.assignDepartmentLeader(directory.getDepartment(patch.department)?.id, person.id);
-  showMemberDialog.value = false;
+  try {
+    const person = await directory.savePerson(id, patch);
+    if (!person) return;
+    directory.addRole(patch.role);
+    if (wasLeader && (!isLeader || oldDepartment !== patch.department)) await directory.assignDepartmentLeader(directory.getDepartment(oldDepartment)?.id, "");
+    if (isLeader) await directory.assignDepartmentLeader(directory.getDepartment(patch.department)?.id, person.id);
+    showMemberDialog.value = false;
+    ElMessage.success(id ? "成员信息已更新" : "成员已新增");
+  } catch (error) {
+    ElMessage.error(error.message || "成员保存失败");
+  }
 }
 </script>

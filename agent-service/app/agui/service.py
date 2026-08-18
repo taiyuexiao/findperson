@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.agent.chain import build_orchestrator
+from app.agent.memory import load_history
 from app.contracts.agent_state import AgentState, RequestState, UserContext
 from app.contracts.trace import new_trace_id
 from app.core import db
@@ -81,6 +82,15 @@ class AguiService:
             session_id, title[:28], summary[:200],
         )
 
+    async def _ensure_session(self, session_id: str, user_id: str) -> None:
+        """前端本地生成的会话 id 首次落库(幂等),保证 get_state/_patch_session 生效。"""
+        await db.execute(
+            "INSERT INTO agent.agent_sessions(session_id, user_id, state)"
+            " VALUES($1,$2,$3) ON CONFLICT (session_id) DO NOTHING",
+            session_id, user_id,
+            json.dumps({"title": "新对话", "summary": "", "turnCount": 0}, ensure_ascii=False),
+        )
+
     async def _save_message(self, *, session_id: str, message_id: str, run_id: str,
                             trace_id: str, user_id: str, role: str, text: str,
                             analysis: dict | None = None, cards: list | None = None) -> None:
@@ -106,17 +116,26 @@ class AguiService:
         assistant_message_id: str = "",
     ) -> AsyncIterator[dict]:
         """执行一轮问答,按序产出 AG-UI 事件。"""
+        trace_id = new_trace_id()
         ids = {
             "sessionId": session_id,
             "runId": uuid.uuid4().hex,
             # 优先使用前端本地生成的助手消息 ID,保证前端事件归属匹配(§3.3)
             "messageId": assistant_message_id or f"msg-a-{uuid.uuid4().hex[:12]}",
+            # 反馈入库需 traceId 关联推荐日志(agent_recommendation_logs)
+            "traceId": trace_id,
         }
-        trace_id = new_trace_id()
+        # 会话管理:确保会话行存在(前端自建 id 首次发消息时);再加载多轮记忆
+        try:
+            await self._ensure_session(session_id, user_context.user_id)
+        except Exception:  # noqa: BLE001 —— 会话落库失败不阻断回答
+            pass
+        history = await load_history(session_id)
         state = AgentState(request=RequestState(
             trace_id=trace_id, run_id=ids["runId"], session_id=session_id,
             user_context=user_context, original_query=text,
             normalized_query=" ".join(text.split()),
+            history=history,
         ))
         state.trace.trace_id = trace_id
         state.trace.run_id = ids["runId"]

@@ -121,3 +121,86 @@ def get_statistic_value(metric_key: str, request: Request, db: Session = Depends
         from ...models.review import PeerReview
         return {"key": metric_key, "value": db.query(sa_func.count(PeerReview.id)).scalar() or 0}
     return {"key": metric_key, "value": 0}
+
+
+# ---------------------------------------------------------------- 推荐反馈可视化(验收:反馈数据进库 + 后台展示)
+
+@router.get("/feedback/summary", summary="Feedback Summary", description="推荐反馈汇总(有帮助率/趋势/点踩原因分布)")
+def feedback_summary(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    from sqlalchemy import text as sa_text
+    totals = db.execute(sa_text(
+        "SELECT feedback_type, count(*) AS n FROM agent.feedback_events"
+        " WHERE feedback_type IN ('like','dislike') GROUP BY feedback_type"
+    )).all()
+    up = sum(int(r.n) for r in totals if r.feedback_type == "like")
+    down = sum(int(r.n) for r in totals if r.feedback_type == "dislike")
+    total = up + down
+    # 近 7 天趋势(按自然日)
+    trend_rows = db.execute(sa_text(
+        "SELECT date_trunc('day', created_at + interval '8 hours') AS day,"
+        "       feedback_type, count(*) AS n"
+        " FROM agent.feedback_events"
+        " WHERE feedback_type IN ('like','dislike')"
+        "   AND created_at >= now() - interval '7 days'"
+        " GROUP BY 1, 2 ORDER BY 1"
+    )).all()
+    days: dict[str, dict] = {}
+    for r in trend_rows:
+        key = r.day.strftime("%m-%d")
+        slot = days.setdefault(key, {"day": key, "up": 0, "down": 0})
+        slot["up" if r.feedback_type == "like" else "down"] = int(r.n)
+    # 点踩原因分布
+    reason_rows = db.execute(sa_text(
+        "SELECT COALESCE(NULLIF(reason,''),'未填写') AS reason, count(*) AS n"
+        " FROM agent.feedback_events WHERE feedback_type='dislike'"
+        " GROUP BY 1 ORDER BY n DESC"
+    )).all()
+    return {
+        "up": up, "down": down, "total": total,
+        "helpfulRate": round(up / total * 100, 1) if total else 0,
+        "trend": list(days.values()),
+        "reasons": [{"reason": r.reason, "count": int(r.n)} for r in reason_rows],
+    }
+
+
+@router.get("/feedback/recent", summary="Feedback Recent", description="最近反馈明细(含用户问题与推荐人选)")
+def feedback_recent(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    from sqlalchemy import text as sa_text
+    rows = db.execute(sa_text(
+        "SELECT e.id, e.created_at, e.user_id, u.name AS user_name,"
+        "       e.feedback_type, e.reason, e.trace_id, e.message_id,"
+        "       e.payload, l.query_summary, l.ranked_candidates"
+        " FROM agent.feedback_events e"
+        " LEFT JOIN public.users u ON u.id = e.user_id"
+        " LEFT JOIN agent.agent_recommendation_logs l"
+        "   ON l.trace_id = e.trace_id AND e.trace_id <> ''"
+        "  AND l.message_id = e.message_id"
+        " WHERE e.feedback_type IN ('like','dislike')"
+        " ORDER BY e.created_at DESC LIMIT :limit"
+    ), {"limit": limit}).all()
+    import json as _json
+    result = []
+    for r in rows:
+        payload = r.payload if isinstance(r.payload, dict) else (_json.loads(r.payload) if r.payload else {})
+        ctx = payload.get("context") or payload
+        # 推荐人选:优先反馈上下文里带的名单,否则从推荐日志取
+        candidates = ctx.get("candidates") or []
+        if not candidates and r.ranked_candidates:
+            rc = r.ranked_candidates if isinstance(r.ranked_candidates, list) else _json.loads(r.ranked_candidates)
+            candidates = [c.get("person_id", "") for c in rc[:5]]
+        result.append({
+            "id": r.id,
+            "createdAt": (r.created_at + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+            "user": r.user_name or r.user_id,
+            "question": ctx.get("question") or r.query_summary or "",
+            "candidates": candidates,
+            "value": "up" if r.feedback_type == "like" else "down",
+            "reason": r.reason or "",
+        })
+    return result

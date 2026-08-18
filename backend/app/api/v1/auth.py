@@ -26,6 +26,7 @@ def _user_to_dict(user: User) -> dict:
         "completeness": user.completeness,
         "recommendedCount": user.recommended_count,
         "active": user.active,
+        "managerId": user.manager_id,
     }
 
 
@@ -34,6 +35,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.account == body.account).first()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
+    if not user.active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已停用,请联系管理员")
     token = create_token(user.id, user.system_role)
     return {"token": token, "user": _user_to_dict(user)}
 

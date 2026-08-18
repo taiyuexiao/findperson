@@ -1209,7 +1209,7 @@ select:focus,
 
 .composer-input-row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;  /* 单行输入框:垂直居中(原 flex-end 适配多行) */
   gap: 12px;
 }
 
@@ -1219,7 +1219,7 @@ select:focus,
 }
 
 .ask-composer textarea {
-  min-height: 78px;
+  min-height: 40px;  /* 默认压缩为一行,输入长文本时 autosize 自动撑高(maxRows:5) */
   padding: 10px 12px;
   border: 0;
   box-shadow: none;

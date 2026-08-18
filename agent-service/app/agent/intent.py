@@ -38,7 +38,7 @@ INTENT_PROMPT = """你是首问责任平台的意图识别器。把用户问题�
 {{"intent": "...", "query_type": "...或null", "confidence": 0.0~1.0,
  "needs_clarification": false, "clarify_question": ""}}
 
-用户问题: {query}"""
+{history_block}用户问题: {query}"""
 
 
 # ---------------------------------------------------------------- RuleFallbackRouter(§5.3)
@@ -84,9 +84,9 @@ class RuleFallbackRouter:
 # 高确定性写操作模式(仅供 _looks_like_write 纠偏使用)
 _WRITE_PATTERNS = (
     r"我的.{1,12}(改为|修改为|改成|更新为|更新成|变为|变成)",
-    r"(联系方式|电话|手机号|邮箱|负责领域|自画像|岗位).{0,4}(改为|改成|变为|换成|是|为)",
+    r"(联系方式|电话|手机号|邮箱|负责领域|自画像|字画像|画像|岗位).{0,4}(改为|改成|变为|换成|是|为)",
     r"我(现在|目前|如今)?负责",        # 『我现在负责X』→ 负责领域变更
-    r"(为|给|帮).{1,8}(添加|写|补|补一?条|补充).{0,4}(评价|画像)",
+    r"(为|给|帮).{1,8}(添加|增加|加|写|补|补一?条|补充).{0,4}(评价|画像|标签)",
     r"(发布|投稿|写一?篇|发一?篇)",
 )
 
@@ -104,10 +104,17 @@ class IntentService:
     def __init__(self, llm: LLMPort | None = None) -> None:
         self._llm = llm
 
-    async def classify(self, query: str) -> IntentState:
+    async def classify(self, query: str, history: list[dict] | None = None) -> IntentState:
         llm = self._llm or get_llm()
+        # 多轮记忆:有历史时注入对话上下文,支撑追问/指代(如『他的电话呢』)
+        history_block = ""
+        if history:
+            from app.agent.memory import format_history
+            text = format_history(history)
+            if text:
+                history_block = f"对话历史(供理解追问/指代,追问意图以上下文为准):\n{text}\n\n"
         data, _result = await llm.structured_chat(
-            [{"role": "user", "content": INTENT_PROMPT.format(query=query)}],
+            [{"role": "user", "content": INTENT_PROMPT.format(query=query, history_block=history_block)}],
             required_keys=["intent", "query_type", "confidence",
                            "needs_clarification", "clarify_question"],
         )
@@ -154,8 +161,23 @@ class IntentNode(AgentNode):
     async def execute(self, state: AgentState, services: ServiceRegistry) -> StateUpdate:
         query = state.request.normalized_query or state.request.original_query
         service = services.get("intent_service") if "intent_service" in services.services else IntentService()
+        # 意图短缓存:相同(问题+历史)直接命中,省一次远程 LLM 往返(验收:响应慢)
+        from app.agent.memory import format_history
+        from app.core.cache import get_cache
+        cache = get_cache()
+        cache_key = f"intent:{query}|{format_history(state.request.history)}"
         try:
-            intent_state = await service.classify(query)
+            cached = await cache.get(cache_key)
+        except Exception:  # noqa: BLE001 —— 缓存故障不影响主链
+            cached = None
+        if cached is not None:
+            return StateUpdate(intent=IntentState(**cached))
+        try:
+            intent_state = await service.classify(query, history=state.request.history)
+            try:
+                await cache.set(cache_key, intent_state.model_dump(), ttl_seconds=300)
+            except Exception:  # noqa: BLE001
+                pass
             return StateUpdate(intent=intent_state)
         except AgentError as e:
             if e.code not in (ErrorCode.LLM_ERROR, ErrorCode.TIMEOUT, ErrorCode.INTENT_ERROR):

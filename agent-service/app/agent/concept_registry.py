@@ -12,7 +12,8 @@ from app.core import db
 from app.core.cache import CacheKeys, get_cache
 
 # 概念词典缓存 TTL(秒);阶段 2 治理动作会主动失效
-CONCEPT_DICT_TTL = 300
+# 验收:后台/画像新标签自动建档 seed 概念后需尽快可检索,全量词典重载成本低(数百级),TTL 30s
+CONCEPT_DICT_TTL = 30
 
 
 class ConceptRegistry:

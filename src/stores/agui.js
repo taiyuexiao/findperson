@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ElMessage } from "element-plus";
 import { loadJson, normalizeContentRecord, saveJson, STORAGE_KEYS } from "../state.js";
-import { connectAguiStream } from "../services/agui/transport.js";
+import { connectAguiStream, fetchAguiSessionState } from "../services/agui/transport.js";
 import { createMockAguiStream } from "../services/agui/mockStream.js";
 import { reportInteractionEvent } from "../services/agui/reporter.js";
 import { useAuthStore } from "./auth.js";
@@ -10,13 +10,27 @@ import { useDirectoryStore } from "./directory.js";
 import { useReviewsStore } from "./reviews.js";
 import { useSessionsStore } from "./sessions.js";
 
+// 原始错误(英文异常/堆栈)只进 console,用户气泡只显示友好文案(§验收:无 BodyStreamBuffer 类原始错误)
+function friendlyAguiError(raw) {
+  const msg = String(raw || "");
+  if (/abort/i.test(msg)) return "响应超时或已取消，请重试";
+  if (/timeout|超时/i.test(msg)) return "响应超时，请重试";
+  if (/failed to fetch|networkerror|load failed|request failed: 5\d\d/i.test(msg)) return "服务暂时不可用，请稍后重试";
+  if (/request failed: 4\d\d/i.test(msg)) return "请求未被接受，请换个说法重试";
+  if (!msg) return "AGUI 响应异常";
+  return "回答生成失败，请换个说法重试";
+}
+
 export const useAguiStore = defineStore("agui", {
   state: () => ({
     activeRunId: "",
     streamStatus: "idle",
+    cancelled: false, // 手动取消标记:取消导致的 AbortError 不当作错误展示
     messagesBySession: loadJson(STORAGE_KEYS.agui, {}).messagesBySession || {},
     cardsByMessage: loadJson(STORAGE_KEYS.agui, {}).cardsByMessage || {},
     pendingConfirmations: loadJson(STORAGE_KEYS.agui, {}).pendingConfirmations || {},
+    // 输入框草稿(按会话):切页/刷新不丢
+    composerDrafts: loadJson(STORAGE_KEYS.agui, {}).composerDrafts || {},
     activeDetail: { type: "empty" },
     isDetailSidebarVisible: false,
     lastError: "",
@@ -36,10 +50,56 @@ export const useAguiStore = defineStore("agui", {
         messagesBySession: this.messagesBySession,
         cardsByMessage: this.cardsByMessage,
         pendingConfirmations: this.pendingConfirmations,
+        composerDrafts: this.composerDrafts,
       });
+    },
+    setComposerDraft(sessionId, text) {
+      if (!sessionId) return;
+      if (text) this.composerDrafts[sessionId] = text;
+      else delete this.composerDrafts[sessionId];
+      this.persist();
     },
     ensureSession(sessionId) {
       if (!this.messagesBySession[sessionId]) this.messagesBySession[sessionId] = [];
+    },
+    // 会话历史回拉:本地无缓存时从 agent-service 恢复消息与卡片(切页/刷新后对话不丢)
+    async loadSessionHistory(sessionId) {
+      if (!sessionId || import.meta.env.VITE_AGUI_MODE !== "server") return;
+      if ((this.messagesBySession[sessionId] || []).length) return;
+      let state;
+      try {
+        state = await fetchAguiSessionState(sessionId);
+      } catch (error) {
+        console.warn("会话历史回拉失败", error);
+        return;
+      }
+      if (!state) {
+        this.ensureSession(sessionId);
+        return;
+      }
+      const messages = [];
+      for (const m of state.messages || []) {
+        if (m.role === "user") {
+          messages.push({ id: m.id, role: "user", text: m.text || "", createdAt: "" });
+        } else if (m.role === "assistant") {
+          messages.push({ id: m.id, role: "assistant", text: m.text || "", streaming: false, analysis: m.analysis || null, createdAt: "" });
+          const cards = Array.isArray(m.cards) ? m.cards : [];
+          if (cards.length) {
+            this.cardsByMessage[m.id] = cards;
+            for (const card of cards) {
+              // 未确认的确认卡恢复为待确认,切页/刷新后仍可继续操作
+              if (card.kind === "confirmation" && card.status !== "confirmed") {
+                this.pendingConfirmations[card.id] = card;
+              }
+            }
+          }
+        }
+      }
+      // 回拉期间用户可能已发新消息,有内容则不覆盖
+      if (!(this.messagesBySession[sessionId] || []).length) {
+        this.messagesBySession[sessionId] = messages;
+      }
+      this.persist();
     },
     async sendMessage(sessionId, text) {
       if (!text?.trim() || this.isStreaming) return;
@@ -52,6 +112,7 @@ export const useAguiStore = defineStore("agui", {
       const userMessageId = `msg-u-${Date.now()}`;
       const assistantMessageId = `msg-a-${Date.now()}`;
       this.activeRunId = runId;
+      this.cancelled = false;
       this.abortController = new AbortController();
       this.timeoutHandle = window.setTimeout(() => this.abortController?.abort(), 30000);
       this.streamStatus = "streaming";
@@ -97,16 +158,25 @@ export const useAguiStore = defineStore("agui", {
       try {
         for await (const event of source) this.applyEvent(event);
       } catch (error) {
-        this.applyEvent({ type: "run_error", sessionId, runId, messageId: assistantMessageId, message: error.message });
+        if (error?.name === "AbortError" && this.cancelled) {
+          // 用户手动取消:静默收尾,不覆盖气泡、不报错
+          this.applyEvent({ type: "run_finished", sessionId, runId, messageId: assistantMessageId });
+        } else {
+          console.warn("AGUI 原始错误:", error);
+          this.applyEvent({ type: "run_error", sessionId, runId, messageId: assistantMessageId, message: error.message });
+        }
       }
     },
     applyEvent(event) {
       this.ensureSession(event.sessionId);
       if (event.type === "run_started") {
         const message = this.messagesBySession[event.sessionId].find((item) => item.id === event.messageId);
-        if (message && event.result?.analysis) {
-          message.analysis = event.result.analysis;
-          message.result = event.result;
+        if (message) {
+          message.traceId = event.traceId || message.traceId;  // 反馈入库需 traceId 关联推荐日志
+          if (event.result?.analysis) {
+            message.analysis = event.result.analysis;
+            message.result = event.result;
+          }
         }
       }
       if (event.type === "text_delta") {
@@ -135,7 +205,7 @@ export const useAguiStore = defineStore("agui", {
         });
       }
       if (event.type === "run_error") {
-        this.lastError = event.message || "AGUI 响应异常";
+        this.lastError = friendlyAguiError(event.message);
         this.streamStatus = "error";
         if (this.timeoutHandle) window.clearTimeout(this.timeoutHandle);
         this.timeoutHandle = null;
@@ -152,6 +222,9 @@ export const useAguiStore = defineStore("agui", {
         if (this.timeoutHandle) window.clearTimeout(this.timeoutHandle);
         this.timeoutHandle = null;
         this.abortController = null;
+        // 取消/异常收尾时气泡可能还停在 streaming 状态,统一复位
+        const doneMessage = (this.messagesBySession[event.sessionId] || []).find((item) => item.id === event.messageId);
+        if (doneMessage) doneMessage.streaming = false;
       }
       this.persist();
     },
@@ -171,8 +244,9 @@ export const useAguiStore = defineStore("agui", {
       this.isDetailSidebarVisible = true;
     },
     openActionDetail(card) {
-      if (card.action?.type === "content") this.activeDetail = { type: "contentDraft", draft: card.action.nextContent, cardId: card.id };
-      else if (card.action?.type === "review") this.activeDetail = { type: "person", personId: card.action.nextReview.personId, cardId: card.id };
+      const confirmed = card.status === "confirmed" || !!card.action?.confirmed;
+      if (card.action?.type === "content") this.activeDetail = { type: "contentDraft", draft: card.action.nextContent, cardId: card.id, confirmed };
+      else if (card.action?.type === "review") this.activeDetail = { type: "reviewAction", action: card.action, cardId: card.id, confirmed };
       else this.activeDetail = { type: "profileAction", action: card.action, cardId: card.id };
       this.isDetailSidebarVisible = true;
     },
@@ -184,7 +258,11 @@ export const useAguiStore = defineStore("agui", {
       if (!card || card.status === "confirmed") return;
       const action = card.action;
       if (action.type === "profile") {
-        useAuthStore().updateProfile(action.nextProfilePatch || {});
+        const result = await useAuthStore().updateProfile(action.nextProfilePatch || {});
+        if (result?.ok === false) {
+          ElMessage.error(result.message || "资料更新失败");
+          return;
+        }
         ElMessage.success("个人主页已更新");
       }
       if (action.type === "review") {
@@ -225,6 +303,7 @@ export const useAguiStore = defineStore("agui", {
       });
     },
     cancelCurrentRun() {
+      this.cancelled = true;
       if (this.abortController) this.abortController.abort();
       if (this.timeoutHandle) window.clearTimeout(this.timeoutHandle);
       this.streamStatus = "idle";

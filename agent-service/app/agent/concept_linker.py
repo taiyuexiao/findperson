@@ -114,10 +114,16 @@ class ConceptCandidateRecall:
         from app.core.embedding_client import cosine_similarity, get_concept_embedding
         emb = get_concept_embedding()
         query_vec = await emb.embed_query(text)
-        rows = await db.fetch(
-            "SELECT concept_id, embedding FROM agent.concepts"
-            " WHERE status IN ('seed','active') AND embedding IS NOT NULL",
-        )
+        # 概念向量全量结果短缓存:避免每查询全表拉取+逐行解析(验收:响应慢)
+        from app.core.cache import get_cache
+        cache = get_cache()
+        rows = await cache.get("concept:embeddings")
+        if rows is None:
+            rows = await db.fetch(
+                "SELECT concept_id, embedding FROM agent.concepts"
+                " WHERE status IN ('seed','active') AND embedding IS NOT NULL",
+            )
+            await cache.set("concept:embeddings", rows, ttl_seconds=30)
         hits: list[ConceptCandidate] = []
         for r in rows:
             cid = r["concept_id"]
@@ -160,7 +166,7 @@ class QueryConceptLinker:
                 candidates = cached
             else:
                 candidates = await self._recall.recall(term)
-                await get_cache().set(cache_key, candidates, ttl_seconds=300)
+                await get_cache().set(cache_key, candidates, ttl_seconds=30)  # 新标签建档后 30s 内可检索
 
             for c in candidates:
                 state.candidate_concepts.append(c.model_dump())

@@ -27,6 +27,7 @@ class PersonResponse(BaseModel):
     completeness: int
     recommended_count: int
     active: bool
+    manager_id: str | None = None  # 直接上级人员 ID
     last_login_at: datetime | None = None
     created_at: datetime | None = None
 
@@ -40,6 +41,22 @@ class PersonResponse(BaseModel):
         return getattr(v, "name", None)
 
 
+class PersonCreateRequest(BaseModel):
+    """新增成员(管理员)"""
+    name: str = Field(min_length=1, max_length=64)
+    account: str | None = Field(None, max_length=64)
+    password: str | None = Field(None, min_length=6, max_length=64)
+    phone: str | None = Field(None, max_length=20)
+    departmentId: int | None = None
+    role: str | None = Field(None, max_length=128)
+    contact: str | None = Field(None, max_length=64)
+    systemRole: str | None = None
+    active: bool | None = None
+    managerId: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
 class PersonUpdateRequest(BaseModel):
     """更新人员信息（可选字段全部可空，支持 camelCase 别名以兼容前端）"""
     phone: str | None = Field(None, max_length=20)
@@ -51,5 +68,6 @@ class PersonUpdateRequest(BaseModel):
     selfPortrait: str | None = None
     systemRole: str | None = None
     active: bool | None = None
+    managerId: str | None = None  # 直接上级(管理员可改)
 
     model_config = {"populate_by_name": True}

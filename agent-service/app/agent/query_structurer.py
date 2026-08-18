@@ -26,7 +26,7 @@ STRUCTURER_PROMPT = """你是问题结构化器。从用户问题中抽取以下
 严格输出 JSON(不要输出其他内容,没有就给空数组):
 {{"systems": [], "objects": [], "symptoms": [], "duty_clues": []}}
 
-用户问题: {query}"""
+{history_block}用户问题: {query}"""
 
 
 class QueryStructurerService:
@@ -35,7 +35,7 @@ class QueryStructurerService:
     def __init__(self, llm: LLMPort | None = None) -> None:
         self._llm = llm
 
-    async def structure(self, query: str) -> UnderstandingState:
+    async def structure(self, query: str, history: list[dict] | None = None) -> UnderstandingState:
         state = UnderstandingState()
 
         # ---- 1) 词典显式匹配(显式出现,field_sources=explicit) ----
@@ -45,6 +45,14 @@ class QueryStructurerService:
             if r["name"] in query:
                 state.mentioned_people.append(r["name"])
                 state.field_sources[f"people:{r['name']}"] = "explicit"
+        # 多轮记忆:本轮未显式提及人名时,从对话历史补全(追问/指代,标 inferred)
+        if history and not state.mentioned_people:
+            from app.agent.memory import format_history
+            history_text = format_history(history, max_chars=500)
+            for r in people_rows:
+                if r["name"] in history_text:
+                    state.mentioned_people.append(r["name"])
+                    state.field_sources[f"people:{r['name']}"] = "inferred"
         for r in dept_rows:
             if r["name"] in query:
                 state.mentioned_departments.append(r["name"])
@@ -69,8 +77,14 @@ class QueryStructurerService:
 
         # ---- 2) LLM 要素抽取(模型推断,field_sources=inferred) ----
         llm = self._llm or get_llm()
+        history_block = ""
+        if history:
+            from app.agent.memory import format_history
+            text = format_history(history)
+            if text:
+                history_block = f"对话历史(供理解追问/指代):\n{text}\n\n"
         data, _ = await llm.structured_chat(
-            [{"role": "user", "content": STRUCTURER_PROMPT.format(query=query)}],
+            [{"role": "user", "content": STRUCTURER_PROMPT.format(query=query, history_block=history_block)}],
             required_keys=["systems", "objects", "symptoms", "duty_clues"],
         )
         for field in ("systems", "objects", "symptoms", "duty_clues"):
@@ -113,7 +127,7 @@ class QueryStructurerNode(AgentNode):
         service = (services.get("query_structurer") if "query_structurer" in services.services
                    else QueryStructurerService())
         try:
-            understanding = await service.structure(query)
+            understanding = await service.structure(query, history=state.request.history)
             return StateUpdate(understanding=understanding)
         except Exception as e:  # noqa: BLE001 —— LLM 失败:保留词典匹配,不产生虚假概念
             fallback = UnderstandingState()

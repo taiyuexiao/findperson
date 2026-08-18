@@ -3,7 +3,6 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
@@ -11,52 +10,16 @@ from ...middleware.deps import get_current_user
 from ...models.review import PeerReview
 from ...schemas.reviews import ReviewCreateRequest, ReviewResponse, PersonTagSummary
 from ...schemas.sessions import PaginatedResponse
+from ...services.publish_event import emit_publish_event, PERSON_CHANGED
+from ...services.tag_sync import sync_tag_to_agent
 
 router = APIRouter(prefix="/reviews", tags=["他画像"])
 
 
 def _sync_review_to_agent_tags(db: Session, *, person_id: str, tag: str, active: bool) -> None:
-    """画像评价同步进 Agent 标签体系(核心业务流程 §四.7:画像参与后续推荐)。
-
-    raw_tags 判重 → person_tags(source=peer_review) 激活/新建 →
-    精确命中概念(canonical/alias)时自动建 tag_concept_map。
-    与调用方同一事务,失败随业务回滚。
-    """
-    normalized = " ".join(tag.split()).lower()
-    row = db.execute(text("SELECT tag_id FROM agent.raw_tags WHERE normalized_text=:n"),
-                     {"n": normalized}).first()
-    if row:
-        tag_id = row[0]
-    else:
-        tag_id = f"tag-pr-{uuid.uuid4().hex[:8]}"
-        db.execute(text("INSERT INTO agent.raw_tags(tag_id, text, normalized_text)"
-                        " VALUES(:i, :t, :n)"),
-                   {"i": tag_id, "t": tag, "n": normalized})
-    pt = db.execute(text("SELECT person_tag_id FROM agent.person_tags"
-                         " WHERE person_id=:p AND tag_id=:t AND source='peer_review'"),
-                    {"p": person_id, "t": tag_id}).first()
-    if pt:
-        db.execute(text("UPDATE agent.person_tags SET is_active=:a WHERE person_tag_id=:i"),
-                   {"a": active, "i": pt[0]})
-    elif active:
-        db.execute(text("INSERT INTO agent.person_tags"
-                        " (person_tag_id, person_id, tag_id, source, created_by, is_active)"
-                        " VALUES(:i, :p, :t, 'peer_review', 'review-api', TRUE)"),
-                   {"i": f"pt-pr-{uuid.uuid4().hex[:8]}", "p": person_id, "t": tag_id})
-    if active:
-        cid = db.execute(
-            text("SELECT c.concept_id FROM agent.concepts c"
-                 " WHERE c.status IN ('seed','active') AND lower(c.canonical_name)=:n"
-                 " UNION SELECT a.concept_id FROM agent.concept_aliases a"
-                 " WHERE lower(a.alias)=:n LIMIT 1"),
-            {"n": normalized}).first()
-        if cid:
-            db.execute(text("INSERT INTO agent.tag_concept_map"
-                            " (map_id, tag_id, concept_id, mapping_type, confidence,"
-                            "  generated_by, review_status)"
-                            " VALUES(:i, :t, :c, 'exact_alias', 1.0, 'rule', 'auto_approved')"
-                            " ON CONFLICT (tag_id, concept_id) DO NOTHING"),
-                       {"i": f"map-pr-{uuid.uuid4().hex[:8]}", "t": tag_id, "c": cid[0]})
+    """画像评价同步进 Agent 标签体系(代理到 services.tag_sync 公共实现)。"""
+    sync_tag_to_agent(db, person_id=person_id, tag=tag, active=active,
+                      source="peer_review", created_by="review-api")
 
 
 def _review_to_response(r: PeerReview) -> ReviewResponse:
@@ -85,6 +48,7 @@ def create_review(body: ReviewCreateRequest, request: Request, db: Session = Dep
         # v4 §五:相同评价人/对象/事项的重复提交按更新处理,不产生重复记录
         existing.created_at = datetime.now(timezone.utc)
         _sync_review_to_agent_tags(db, person_id=body.personId, tag=body.tag, active=True)
+        emit_publish_event(db, PERSON_CHANGED, body.personId, created_by=user.id)
         db.commit()
         db.refresh(existing)
         return _review_to_response(existing)
@@ -96,6 +60,8 @@ def create_review(body: ReviewCreateRequest, request: Request, db: Session = Dep
     )
     db.add(review)
     _sync_review_to_agent_tags(db, person_id=body.personId, tag=body.tag, active=True)
+    # 发事件:agent-service 消费后重建该人员的 OKF/RAG 索引(画像进知识检索)
+    emit_publish_event(db, PERSON_CHANGED, body.personId, created_by=user.id)
     db.commit()
     db.refresh(review)
     return _review_to_response(review)
@@ -147,5 +113,6 @@ def delete_review(review_id: str, request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能删除自己发出的标签")
     db.delete(review)
     _sync_review_to_agent_tags(db, person_id=review.person_id, tag=review.tag_name, active=False)
+    emit_publish_event(db, PERSON_CHANGED, review.person_id, created_by=user.id)
     db.commit()
     return {"message": "已删除"}
