@@ -45,7 +45,7 @@
 
                 <RecommendationCardGroup
                   :cards="recommendationCards(turn.assistant.id)"
-                  @profile="openProfile"
+                  @profile="openPersonDetail"
                 />
 
                 <ActionCard
@@ -225,6 +225,11 @@ function toggleFeedback(targetKey, value) {
 
 function openProfile(personId) {
   router.push({ name: "profile", params: { id: personId }, query: { redirect: route.fullPath } });
+}
+
+// 点击推荐人员卡片：打开右侧详情侧边栏（人员详情），而非跳转完整主页
+function openPersonDetail(personId) {
+  agui.openPersonDetail(personId);
 }
 
 function openContentDetail(contentId) {
