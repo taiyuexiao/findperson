@@ -18,10 +18,10 @@ from app.core.llm_client import LLMPort, get_llm
 
 STRUCTURER_PROMPT = """你是问题结构化器。从用户问题中抽取以下要素(不要编造,问题里没有就留空):
 
-- systems:提到的系统/平台/产品名(如 Dify、HiAgent、模型网关)
+- systems:提到的系统/平台/产品/业务领域/事项名称(如 Dify、HiAgent、模型网关、食堂、出入境、数据治理、篮球)。注意:用户问"谁负责X/谁懂X/谁喜欢X/办理X找谁"时,X 本身就是,必须抽出
 - objects:涉及的对象(如 Agent、大模型调用、接口)
 - symptoms:症状/异常现象(如 响应慢、并发高时超时、报错)
-- duty_clues:职责线索(如 性能优化、故障排查、运维)
+- duty_clues:职责线索(如 性能优化、故障排查、运维、管理、办理)
 
 严格输出 JSON(不要输出其他内容,没有就给空数组):
 {{"systems": [], "objects": [], "symptoms": [], "duty_clues": []}}
@@ -76,6 +76,7 @@ class QueryStructurerService:
                 state.field_sources[f"systems:{alias}"] = "explicit"
 
         # ---- 2) LLM 要素抽取(模型推断,field_sources=inferred) ----
+        # LLM 失败时仅保留词典显式匹配结果(§6.1:不产生虚假概念;词典结果在异常时不丢失)
         llm = self._llm or get_llm()
         history_block = ""
         if history:
@@ -83,10 +84,13 @@ class QueryStructurerService:
             text = format_history(history)
             if text:
                 history_block = f"对话历史(供理解追问/指代):\n{text}\n\n"
-        data, _ = await llm.structured_chat(
-            [{"role": "user", "content": STRUCTURER_PROMPT.format(query=query, history_block=history_block)}],
-            required_keys=["systems", "objects", "symptoms", "duty_clues"],
-        )
+        try:
+            data, _ = await llm.structured_chat(
+                [{"role": "user", "content": STRUCTURER_PROMPT.format(query=query, history_block=history_block)}],
+                required_keys=["systems", "objects", "symptoms", "duty_clues"],
+            )
+        except Exception:  # noqa: BLE001
+            data = {}
         for field in ("systems", "objects", "symptoms", "duty_clues"):
             values = data.get(field) or []
             if not isinstance(values, list):

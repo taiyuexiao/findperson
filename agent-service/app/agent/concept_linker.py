@@ -23,7 +23,23 @@ from app.core.cache import CacheKeys, get_cache
 
 # 确认阈值与可自动确认的确定性级别(§7.3:trgm/vector 只出候选,不自动映射)
 RESOLVE_THRESHOLD = 0.9
-AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical")
+# 前三级 + prefix/subseq 为确定性级别可自动 resolved;
+# prefix = 问句短词对长概念名的前缀/包含匹配;subseq = 字符子序列匹配(缺字说法,唯一命中才生效)
+AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical", "prefix", "subseq")
+
+
+# 第 2.5 级前缀/包含匹配的词项停用表:通用动作/职能词不做前缀匹配
+# (「申请」前缀中「申请受理」这类职能概念会错拉一票人;食堂/出入境等真实领域词不受影响)
+_PREFIX_STOP_TERMS = {
+    "申请", "办理", "管理", "负责", "维护", "处理", "咨询", "值班", "运维",
+    "受理", "负责人", "备岗", "故障", "申请受理", "资源负责人", "运维与故障", "备岗与咨询",
+}
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    """needle 的字符按顺序出现在 haystack 中(允许中间插字),如 会议申请⊂会议室申请。"""
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
 
 
 class ConceptCandidateRecall:
@@ -66,6 +82,53 @@ class ConceptCandidateRecall:
                     candidate_score=0.98, matched_text=text,
                     canonical_name=concepts[cid].canonical_name,
                 ))
+
+        # 第 2.5 级:前缀/包含匹配(验收:短问句对长概念名,如 食堂→食堂评价、出入境→出入境管理)
+        # 多概念歧义时不自动 resolved(由 resolve 侧 distinct>1 拦下),只出候选;
+        # 通用动作/职能词(申请/办理/运维…)不参与前缀匹配,防错拉职能类概念
+        if not candidates and normalized not in _PREFIX_STOP_TERMS:
+            for c in concepts.values():
+                name = c.canonical_name.lower()
+                if name.startswith(normalized) or (len(normalized) > len(name) and name in normalized):
+                    candidates.append(ConceptCandidate(
+                        concept_id=c.concept_id, candidate_source="prefix",
+                        candidate_score=0.96, matched_text=text,
+                        canonical_name=c.canonical_name,
+                    ))
+            if not candidates:
+                aliases = await self._registry.load_aliases()
+                for alias, cid in aliases.items():
+                    if cid not in concepts:
+                        continue
+                    if alias.startswith(normalized) or (len(normalized) > len(alias) and alias in normalized):
+                        candidates.append(ConceptCandidate(
+                            concept_id=cid, candidate_source="prefix",
+                            candidate_score=0.96, matched_text=text,
+                            canonical_name=concepts[cid].canonical_name,
+                        ))
+
+        # 第 2.6 级:子序列匹配(验收:会议申请→会议室申请;用户漏字/插字说法)
+        # 仅短词对长名(防长问句误配);词长≥3;多概念歧义时不自动 resolved,只出候选
+        if not candidates and len(normalized) >= 3 and normalized not in _PREFIX_STOP_TERMS:
+            for c in concepts.values():
+                name = c.canonical_name.lower()
+                if len(normalized) < len(name) and _is_subsequence(normalized, name):
+                    candidates.append(ConceptCandidate(
+                        concept_id=c.concept_id, candidate_source="subseq",
+                        candidate_score=0.94, matched_text=text,
+                        canonical_name=c.canonical_name,
+                    ))
+            if not candidates:
+                aliases = await self._registry.load_aliases()
+                for alias, cid in aliases.items():
+                    if cid not in concepts:
+                        continue
+                    if len(normalized) < len(alias) and _is_subsequence(normalized, alias):
+                        candidates.append(ConceptCandidate(
+                            concept_id=cid, candidate_source="subseq",
+                            candidate_score=0.94, matched_text=text,
+                            canonical_name=concepts[cid].canonical_name,
+                        ))
 
         # 第三级:RawTag Historical Mapping(已审核的相同 RawTag 映射,直接复用)
         if not candidates:
@@ -173,7 +236,7 @@ class QueryConceptLinker:
             state.concept_link_trace.append({
                 "term": term,
                 "candidates": [c.model_dump() for c in candidates],
-                "levels_tried": ["exact", "alias", "historical"],
+                "levels_tried": ["exact", "alias", "prefix", "subseq", "historical"],
             })
 
             # 确认规则:只有确定性级别(exact/alias/historical)可自动 resolved;

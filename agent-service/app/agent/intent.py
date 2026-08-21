@@ -1,4 +1,4 @@
-"""一级意图与查询类型识别 + RuleFallbackRouter(V1.2 §5.2 / §5.3)。
+﻿"""一级意图与查询类型识别 + RuleFallbackRouter(V1.2 §5.2 / §5.3)。
 
 - IntentService:LLM 输出严格限制为 Intent Schema;LLM 不允许直接产生
   人员 ID、最终概念 ID 或 SQL(§5.2)——这里只输出意图枚举。
@@ -20,9 +20,9 @@ from app.core.llm_client import LLMPort, get_llm
 
 # ---------------------------------------------------------------- Prompt(业务 Prompt 归本模块,不进 LLM Client)
 
-INTENT_PROMPT = """你是首问责任平台的意图识别器。把用户问题分类为以下一级意图之一:
+INTENT_PROMPT = """你是首问必答平台的意图识别器。把用户问题分类为以下一级意图之一:
 
-- find_person:找人(负责人、联系人、专家、谁懂某领域、故障找谁)
+- find_person:找人(负责人、联系人、专家、谁懂某领域、谁喜欢/擅长某事(兴趣/技能找人)、故障找谁)
 - knowledge_qa:知识问答(制度、流程、操作方法、技术方案)
 - edit:写操作,包括修改本人资料(如『我现在负责X』『把我的电话改为X』『我的负责领域更新为X』)、发布内容、为他人写评价/画像
 - chat:闲聊、问候、与平台业务无关的对话
@@ -73,6 +73,11 @@ class RuleFallbackRouter:
         if re.search(r"谁(来)?负责", q):
             return IntentState(intent=Intent.FIND_PERSON,
                                query_type=QueryType.EXPLICIT_RESPONSIBILITY, confidence=0.9)
+
+        # 2.5) "谁喜欢/擅长/会/懂/熟悉 X" → expert_finding(兴趣/技能找人)
+        if re.search(r"谁(喜欢|擅长|会|懂|熟悉|了解)", q):
+            return IntentState(intent=Intent.FIND_PERSON,
+                               query_type=QueryType.EXPERT_FINDING, confidence=0.9)
 
         # 3) "X部门(的)谁/人" → contact_lookup(部门找人)
         if re.search(r"部(的门|人员|谁|找人)", q):

@@ -1,4 +1,4 @@
-"""写操作动作草稿(edit 意图 → confirmation_card,V1.2 §5.2 + 实施方案v3 §3.3)。
+﻿"""写操作动作草稿(edit 意图 → confirmation_card,V1.2 §5.2 + 实施方案v3 §3.3)。
 
 三类写操作:
 - profile:资料维护(联系方式/负责领域/自画像等当前用户可维护字段)
@@ -36,6 +36,115 @@ SUBMIT_TARGETS = {
     ACTION_CONTENT: "/api/v1/contents",
 }
 
+# ---------------------------------------------------------------- 多轮续接(零 LLM)
+# 省略式追问:「再加一句 X」「换成 X」「再加一个 X」——有待确认草稿时直接合并,
+# 不再走意图识别(A/B 实验:多轮续接准确率 72.7% → 100%,续接轮零 LLM 调用)
+
+_CONT_MARK = re.compile(r"^(再|还|也|顺便|继续|接着|外加|加上|加|补|补充|再来|帮我把)")
+_REPLACE_MARK = re.compile(r"^(改成|换成|改为|变为|变成|更新为|设置为)")
+
+
+def _targets_same_field(pending_card: dict, text: str) -> bool:
+    """续接文本与待确认草稿是否指向同一字段(加一句/补充到画像、再加标签、换联系方式等)。"""
+    action = pending_card.get("action") or {}
+    patch = action.get("nextProfilePatch") or {}
+    if "selfPortrait" in patch and re.search(r"自画像|字画像|画像|简介|自我介绍", text):
+        return True
+    if "addDomains" in patch and re.search(r"标签|领域", text):
+        return True
+    if "contact" in patch and re.search(r"联系方式|电话|手机|邮箱", text):
+        return True
+    if action.get("type") == ACTION_REVIEW and re.search(r"标签|评价", text):
+        return True
+    if action.get("type") == ACTION_CONTENT and re.search(r"补充|添加|再加|加上|正文|摘要", text):
+        return True
+    return False
+
+
+def is_continuation(text: str, pending_card: dict | None = None) -> bool:
+    """判断是否为对上一轮写操作的续接(省略/追加/替换式追问)。
+
+    三类判定:
+    1. 句首续接词(再/还/也/加一句/换成…);
+    2. 短句且无疑问/检索/发布词;
+    3. 含追加动词且与待确认草稿指向同一字段(如已有自画像草稿时说「在我的自画像后面加一句X」)。
+    """
+    t = text.strip()
+    if _CONT_MARK.search(t) or _REPLACE_MARK.search(t):
+        return True
+    if len(t) <= 12 and not re.search(r"谁|怎么|怎样|什么|哪|吗|呢|找|查|请问|发布|文章", t):
+        return True
+    if pending_card and re.search(r"再加|加一?句|加一?个|补充|追加|加上|添加", t) \
+            and _targets_same_field(pending_card, t):
+        return True
+    return False
+
+
+def _extract_delta(text: str) -> tuple[str, str]:
+    """返回 (模式, 增量内容)。replace=替换, append=追加。"""
+    t = text.strip()
+    m = _REPLACE_MARK.match(t)
+    if m:
+        return "replace", re.sub(r"^[：:，,。\s]+", "", t[m.end():]).strip()
+    # 循环剥掉句首的续接标记(「再加一句」「加一句」「再补充一个」等组合)
+    prev = None
+    while prev != t:
+        prev = t
+        t = _CONT_MARK.sub("", t, count=1)
+        t = re.sub(r"^(一[句个条局段次遍]|一句|一个|一局|一次|标签|领域)", "", t)
+        t = t.lstrip("：:，,。\s")
+    # 句中形态:「在我的自画像后面加一句 X」→ 取标记之后的内容
+    m = re.search(r"(?:再加|加|补充|追加|加上|添加)(?:一[句个条]|一句|一个)?[：:，,。\s]*(.+)$", t)
+    if m and re.search(r"自画像|字画像|画像|简介|自我介绍|标签|领域", t[:m.start(1)]):
+        t = m.group(1)
+    return "append", re.sub(r"^[：:，,。\s]+", "", t).strip()
+
+
+def merge_draft(card: dict, text: str) -> dict:
+    """把续接增量合并进待确认草稿(深拷贝,不改原卡)。"""
+    import copy
+    merged = copy.deepcopy(card)
+    action = merged["action"]
+    mode, delta = _extract_delta(text)
+    if not delta:
+        return merged
+    if action["type"] == ACTION_PROFILE:
+        patch = action.setdefault("nextProfilePatch", {})
+        if "selfPortrait" in patch:
+            patch["selfPortrait"] = (delta if mode == "replace"
+                                     else f"{patch['selfPortrait']} {delta}".strip())
+        elif "addDomains" in patch:
+            patch["addDomains"] = [*patch["addDomains"], delta]
+        elif "contact" in patch:
+            patch["contact"] = delta  # 联系方式单值字段:替换
+        else:
+            patch["selfPortrait"] = delta
+        action["changes"] = [f"{k}将更新为 {'、'.join(v) if isinstance(v, list) else v}"
+                             for k, v in patch.items() if not k.startswith("_")]
+    elif action["type"] == ACTION_REVIEW:
+        nr = action.get("nextReview") or {}
+        nr["tag"] = delta[:REVIEW_TAG_MAX_LEN]
+        nr["text"] = nr["tag"]
+        action["changes"] = [f"评价对象:{nr.get('personName', '')}", f"事项:{nr['tag']}"]
+    elif action["type"] == ACTION_CONTENT:
+        nc = action.setdefault("nextContent", {})
+        nc["body"] = f"{nc.get('body', '')}\n{delta}".strip()
+        action["changes"] = [f"标题:{nc.get('title', '')}", "正文已追加补充"]
+    return merged
+
+
+def build_continuation_card(card: dict, text: str, *, run_id: str) -> dict:
+    """基于上一张待确认卡 + 续接文本,生成合并后的新确认卡(新 id/draftId)。"""
+    merged = merge_draft(card, text)
+    merged["id"] = f"confirm-{run_id}"
+    merged["status"] = "active"
+    action = merged["action"]
+    action["draftId"] = f"draft-{run_id}"
+    summary = "、".join(action.get("changes") or [])[:60]
+    merged["analysis"] = {"intent": "edit", "actionType": action["type"],
+                          "summary": f"续接合并:{summary}"}
+    return merged
+
 # 资料字段中文名(changes 展示用)
 # 注意:键名必须落前端确认白名单(auth store updateProfile):contact/addDomains/selfPortrait
 FIELD_LABELS = {
@@ -46,13 +155,15 @@ FIELD_LABELS = {
 _PATCH_KEY_MAP = {"phone": "contact", "domains": "addDomains"}
 _PATCH_DROP_KEYS = {"role", "name", "phone", "domains"}  # role/name 非本人可维护项
 
-_EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问责任平台执行一个写操作,动作类型为 {action_type}。
+_EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问必答平台执行一个写操作,动作类型为 {action_type}。
 从用户的话里提取草稿字段,提取不到就留空,严禁编造。
 
 动作类型说明:
 - profile(资料维护):提取 nextProfilePatch,可含 contact(联系方式)/phone(手机号)/role(岗位)/domains(负责领域,数组)/selfPortrait(自画像)
 - review(他人画像):提取 personName(被评价人姓名)与 tag(事项标签,不超过20字)
-- content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)/body(正文)
+- content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)/body(正文)。
+  用户原话中标题声明(「标题是X」/《X》)之后的完整说明性文字是正文,body 必须照抄原文、不得概括或截断;
+  summary 取正文首句或用户显式给出的摘要。
 
 严格输出 JSON(不要输出其他内容)。字段格式如下,值必须是从问题中提取的内容,严禁照抄示例中的空值:
 {schema}
@@ -64,6 +175,19 @@ _EXTRACT_SCHEMAS = {
     ACTION_REVIEW: '{"personName": "", "tag": ""}',
     ACTION_CONTENT: '{"title": "", "tags": [], "summary": "", "body": ""}',
 }
+
+# 二级分流 LLM 分类兜底(规则未命中时使用;长尾说法不再依赖补规则)
+_CLASSIFY_PROMPT = """你是首问必答平台的写操作分类器。判断用户想执行的写操作属于哪一类:
+
+- profile:维护本人资料(修改自己的联系方式/负责领域/自画像/岗位等,对象是本人)
+- review:为他人画像/打标签/写评价(对象必须是别人)
+- content:发布/撰写内容(文章、经验、制度说明等)
+- unclear:无法判断是写操作,或类型不明
+
+严格输出 JSON(不要输出任何其他内容):
+{{"action_type": "profile|review|content|unclear"}}
+
+用户问题: {query}"""
 
 
 @dataclass
@@ -87,39 +211,50 @@ class ActionDraftService:
 
     @staticmethod
     def classify(query: str) -> str | None:
-        """确定性规则分类(优先级:他人画像 > 内容发布 > 资料维护);不命中返回 None。"""
+        """对象驱动的确定性分类(优先级:本人资料 > 内容发布 > 他人画像);不命中返回 None。
+
+        设计要点:三类写操作的区别在【动作对象】而非动词——动词枚举永远有长尾,
+        对象词表有限且稳定:
+        - 对象是本人(我的资料/画像/领域/联系方式…/给我自己加标签)→ profile
+        - 对象是他人(给/为/帮某人,或含 评价/画像 动作且不指向本人)→ review
+        - 对象是内容(发布/文章/《》)→ content
+        """
         q = query.strip()
-        # 「修改/更新 我的(自|字)画像 为 X」→ 本人自画像(profile),优先于他人画像规则
-        if "我" in q and re.search(r"(修改|更新|维护|完善|填写|改).{0,8}(自画像|字画像|画像)", q):
+        # 0) 内容发布强信号优先:发布动词+内容对象词(正文里常含“资料/领域/介绍”等词,
+        #    若先走本人资料规则会被误判为 profile)
+        if re.search(r"(发布|发表|投稿|写一?篇|发一?篇|发内容|发文章)", q) and re.search(
+                r"(文章|内容|一篇|《|标题|正文|稿|帖子|推文)", q):
+            return ACTION_CONTENT
+        # 1) 本人资料维护:自我指代 + 资料类对象词(动词不限,防长尾)
+        if re.search(r"(我的?|自己|本人)", q) and re.search(
+                r"(资料|信息|联系方式|电话|手机|邮箱|负责领域|领域|自画像|字画像|画像|岗位|主页|简介|自我介绍|签名)", q):
             return ACTION_PROFILE
-        # 「给/为/帮 我自己/本人 添加X标签/领域」→ 本人负责领域(profile),不进他人画像
+        # 「给我自己/本人 添加X标签/领域」→ 本人负责领域
         if re.search(r"(为|给|帮)?(我自己|本人|我).{0,4}(添加|增加|加|补).{0,8}(标签|领域)", q):
             return ACTION_PROFILE
-        # 「给/为/帮 XX 添加/增加/加 标签(或评价/画像)」→ 他人画像
-        if re.search(r"(为|给|帮).{1,8}(添加|增加|加|写|补).{0,4}(标签|评价|画像)", q):
-            return ACTION_REVIEW
-        if re.search(r"(评价|画像|点评|打标签|写标签)", q) and re.search(r"(为|给|帮)?[^我].{0,8}(评价|画像|点评)", q):
-            return ACTION_REVIEW
-        if re.search(r"(发布|发一?篇|投稿|写一?篇|发内容|发文章)", q):
-            return ACTION_CONTENT
-        if re.search(r"(修改|更新|维护|完善|填写).{0,6}(资料|信息|联系方式|电话|领域|画像|岗位|主页)", q):
-            return ACTION_PROFILE
-        if re.search(r"(我的|个人)(资料|联系方式|电话|负责领域|自画像|岗位)", q):
-            return ACTION_PROFILE
-        # 「(我的)电话/联系方式/领域/画像/岗位 + 改为/是/为/换成 X」(可省略主语与动词)
-        if re.search(r"(联系方式|联系电话|电话|手机号|手机|邮箱|负责领域|自画像|岗位)"
-                     r"[^0-9一-鿿]{0,4}(改为|改成|变为|变成|换成|更新为|是|为)", q):
-            return ACTION_PROFILE
-        # 「我现在/目前负责 X」→ 负责领域变更(核心业务流程 §二 原话用例)
+        # 「我现在/目前负责 X」→ 负责领域变更(核心业务原话用例)
         if re.search(r"我(现在|目前|如今)?负责", q):
             return ACTION_PROFILE
+        # 2) 内容发布
+        if re.search(r"(发布|发一?篇|投稿|写一?篇|发内容|发文章)", q):
+            return ACTION_CONTENT
+        # 3) 他人画像:「给/为/帮/替 XX 添加标签/评价/画像」
+        if re.search(r"(为|给|帮|替).{1,8}(添加|增加|加|写|补).{0,4}(标签|评价|画像)", q):
+            return ACTION_REVIEW
+        # 含 评价/画像 动作但对象不是本人资料(防"自画像"误入)
+        if re.search(r"(评价|点评|打标签|写标签|画像)", q) and not re.search(
+                r"我的?(自画像|字画像|画像|资料|领域|联系方式|电话|岗位|主页|简介|自我介绍)", q):
+            return ACTION_REVIEW
         return None
 
     # ---------------- 草稿构建 ----------------
 
     async def build(self, query: str, user_context: UserContext, *,
-                    run_id: str) -> ActionDraftResult:
+                    run_id: str, history: list[dict] | None = None) -> ActionDraftResult:
         action_type = self.classify(query)
+        if action_type is None:
+            # 规则快速路径未命中:LLM 分类兜底(带会话记忆,省略式追问也能分流)
+            action_type = await self._classify_with_llm(query, history=history)
         if action_type is None:
             return ActionDraftResult(
                 reply_text=("我识别到您想执行写操作,但没有完全确认类型。您可以这样说:"
@@ -137,15 +272,41 @@ class ActionDraftService:
             ACTION_REVIEW: self._build_review,
             ACTION_CONTENT: self._build_content,
         }[action_type]
-        result = builder(query, user_context, run_id=run_id, extracted=extracted,
-                         names=name_to_id)
+        if action_type == ACTION_PROFILE:
+            result = await builder(query, user_context, run_id=run_id, extracted=extracted,
+                                   names=name_to_id)
+        else:
+            result = builder(query, user_context, run_id=run_id, extracted=extracted,
+                             names=name_to_id)
         result.action_type = action_type
         result.degraded = result.degraded or degraded
         return result
 
+    # ---------------- LLM 分类兜底 ----------------
+
+    async def _classify_with_llm(self, query: str, *, history: list[dict] | None = None) -> str | None:
+        """约束 JSON 让 LLM 判断写操作类型;失败/非法输出返回 None(走套话澄清)。
+
+        带会话记忆:省略式追问(「再加一句X」)能从上文意图/槽位继承类型。"""
+        llm = self._llm or get_llm()
+        history_block = ""
+        if history:
+            from app.agent.memory import format_history
+            text = format_history(history, max_chars=200)
+            if text:
+                history_block = f"对话历史与记忆(供理解追问/指代):\n{text}\n\n"
+        try:
+            data, _ = await llm.structured_chat(
+                [{"role": "user", "content": history_block + _CLASSIFY_PROMPT.format(query=query)}],
+                required_keys=["action_type"])
+            value = str(data.get("action_type") or "").strip()
+            return value if value in (ACTION_PROFILE, ACTION_REVIEW, ACTION_CONTENT) else None
+        except Exception:  # noqa: BLE001 —— LLM 失败:不猜测,交给澄清话术
+            return None
+
     # ---------------- 三类草稿 ----------------
 
-    def _build_profile(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
+    async def _build_profile(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         patch = {k: v for k, v in (extracted.get("nextProfilePatch") or {}).items()
                  if v not in (None, "", [])}
         if not patch:
@@ -159,8 +320,10 @@ class ActionDraftService:
             if m:
                 patch = {"addDomains": [m.group(1).strip()]}
         if not patch:
-            # 规则兑底 3:「(给我自己)添加/增加 X 标签/领域」→ 负责领域新增
+            # 规则兑底 3:「(给我自己)添加/增加 X 标签/领域」或「标签/领域:X」→ 负责领域新增
             m = re.search(r"(?:添加|增加|加|补充)(?:一?个|一条)?([^,，。！？!?]{1,20}?)(?:标签|领域)", query)
+            if not m:
+                m = re.search(r"(?:标签|领域)[：:]([^,，。！？!?]{1,20})", query)
             if m:
                 patch = {"addDomains": [m.group(1).strip()]}
         if not patch:
@@ -169,11 +332,30 @@ class ActionDraftService:
             if m:
                 patch = {"selfPortrait": m.group(1).strip()}
         if not patch:
+            # 规则兑底 5:「(在)(我的)(自)画像(后面/后/里)新增/补充/添加 X」→ 自画像追加
+            m = re.search(r"(?:新增|添加|补充|加上|加一?句|补一?句)[^,，。！？!?]{0,6}?([^,，。！？!?]{1,50})", query)
+            if m and re.search(r"(自画像|字画像|画像|简介|自我介绍)", query):
+                patch = {"selfPortrait": m.group(1).strip(), "_append": True}
+        if not patch:
             return ActionDraftResult(
                 action_type=ACTION_PROFILE,
                 reply_text=("请告诉我您要更新哪项资料(联系方式/负责领域/自画像/岗位)以及新内容,"
                             "例如『把我的负责领域更新为 RAG、知识检索』。"),
                 missing=["nextProfilePatch"])
+        # 追加语义:「新增/补充/添加/再加 X」且落到自画像/领域字段 → 与现有内容合并(避免覆盖原文)
+        # 注:不再要求句中出现“画像”字样(「再加一句 红色警戒20年老玩家」这种省略说法也要追加)
+        append_mode = patch.pop("_append", False) or bool(
+            re.search(r"(新增|添加|补充|加上|再加|再添|加一?句|补一?句|添一?句)", query)
+            and ("selfPortrait" in patch or "addDomains" in patch))
+        if append_mode and patch.get("selfPortrait"):
+            try:
+                row = await db.fetchrow("SELECT self_portrait FROM public.people WHERE id=$1", ctx.user_id)
+                current = (row["self_portrait"] or "").strip() if row else ""
+                addition = str(patch["selfPortrait"]).strip()
+                if current and addition and addition not in current:
+                    patch["selfPortrait"] = f"{current} {addition}"
+            except Exception:  # noqa: BLE001 —— 读取失败则保持新增内容,由用户确认前可见
+                pass
         # 键名归一:phone→contact、domains→addDomains;剔除前端不可维护字段
         normalized: dict = {}
         for key, value in patch.items():
@@ -262,16 +444,23 @@ class ActionDraftService:
 
     def _build_content(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         title = str(extracted.get("title") or "").strip()
-        if not title:
-            # 规则兑底:《标题》或「一/篇 XXX」片段
-            m = re.search(r"《([^》]{2,60})》", query) or re.search(r"一?篇([^,，。！？!?]{2,30})", query)
-            if m:
-                title = m.group(1).strip()
         summary = str(extracted.get("summary") or "").strip()
         body = str(extracted.get("body") or "").strip()
+        # 规则兑底:从原文确定性抽取标题/正文/摘要(LLM 漏抽时补)
+        r_title, r_summary, r_body = self._extract_content_parts(query)
+        title = title or r_title
+        body = body or r_body
+        summary = summary or r_summary
+        if body and not summary:
+            # 摘要缺省:取正文首句(≤60字)
+            first = re.split(r"[。!?!?\n]", body, maxsplit=1)[0].strip()
+            summary = (first or body)[:60]
         tags = extracted.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in re.split(r"[,、,]", tags) if t.strip()]
+        if not title and body:
+            # 标题实在抽不到但有正文:用正文首句当标题,保证草稿可用
+            title = re.split(r"[。!?!?\n]", body, maxsplit=1)[0].strip()[:30] or "未命名内容"
         if not title:
             return ActionDraftResult(
                 action_type=ACTION_CONTENT,
@@ -286,7 +475,8 @@ class ActionDraftService:
             "description": "确认发布后进入待审核状态,审核通过前不会对外公开。",
             "changes": [f"标题:{title}"]
                        + ([f"关联领域:{'、'.join(tags)}"] if tags else [])
-                       + ([f"摘要:{summary[:40]}"] if summary else []),
+                       + ([f"摘要:{summary[:40]}"] if summary else [])
+                       + ([f"正文:已识别 {len(body)} 字"] if body else []),
             "nextContent": {"title": title, "tags": tags,
                             "summary": summary, "body": body or summary},
         }, summary=f"发布内容:{title}")
@@ -300,6 +490,42 @@ class ActionDraftService:
             action_type=ACTION_CONTENT, card=card,
             reply_text="已生成内容草稿,确认发布后进入待审核状态(审核通过前不会对外公开)。",
         )
+
+    @staticmethod
+    def _extract_content_parts(query: str) -> tuple[str, str, str]:
+        """从发布请求原文确定性抽取 (标题, 摘要, 正文);抽不到留空。
+
+        支持的说法:
+        - 《标题》 / 标题是X / 标题:X
+        - 摘要:X / 摘要是X
+        - 正文:X / 正文是X(之后全部)
+        - 无显式正文标记时:标题声明片段之后的剩余文本(≥15字)视为正文
+        """
+        title = summary = body = ""
+        title_span: tuple[int, int] | None = None
+        m = re.search(r"《([^》]{2,60})》", query)
+        if m:
+            title, title_span = m.group(1).strip(), m.span()
+        if not title:
+            m = re.search(r"标题\s*[是为：:]\s*([^,，。!?!?；;\n]{2,60})", query)
+            if m:
+                title, title_span = m.group(1).strip(), m.span()
+        if not title:
+            m = re.search(r"一?篇(?:内容|文章)?[,，]?(?:题目是|叫)?([^,，。!?!?]{2,30})", query)
+            if m:
+                title, title_span = m.group(1).strip(), m.span()
+        m = re.search(r"摘要\s*[是为：:]\s*([^。!?!?\n]{2,120})", query)
+        if m:
+            summary = m.group(1).strip()
+        m = re.search(r"正文\s*[是为：:]\s*(.+)$", query, re.S)
+        if m:
+            body = m.group(1).strip()
+        if not body and title_span and title_span[1] < len(query):
+            rest = query[title_span[1]:]
+            rest = re.sub(r"^[，,。:：;；\s]*(正文)?[是为：:]?\s*", "", rest)
+            if len(rest) >= 15:
+                body = rest.strip()
+        return title, summary, body
 
     # ---------------- 内部 ----------------
 

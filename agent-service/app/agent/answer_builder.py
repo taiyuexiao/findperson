@@ -1,4 +1,4 @@
-"""AnswerBuilder(V1.2 §13.1)。
+﻿"""AnswerBuilder(V1.2 §13.1)。
 
 Hermes/模板只负责自然语言组织。回答强制分「检索到的事实 / 建议」;
 人员标注身份(正式责任人/明确负责领域命中者/相关参与者/能力候选人/领域专家)。
@@ -175,7 +175,7 @@ class AnswerBuilderNode(AgentNode):
         if state.intent.intent == Intent.CHAT:
             # chat:简单实现(§5.2),不进检索排序
             update.response = ResponseState(
-                final_answer="您好!我是首问责任助手,可以帮您查找负责人、专家,或查询制度流程知识。")
+                final_answer="您好!我是首问必答助手,可以帮您查找负责人、专家,或查询制度流程知识。")
             update.terminate = True
             return update
         if state.intent.intent == Intent.UNCLEAR or state.intent.needs_clarification:
@@ -193,7 +193,8 @@ class AnswerBuilderNode(AgentNode):
                        if "action_drafts" in services.services else ActionDraftService())
             query = state.request.normalized_query or state.request.original_query
             result = await service.build(query, state.request.user_context,
-                                         run_id=state.request.run_id)
+                                         run_id=state.request.run_id,
+                                         history=state.request.history)
             update.response = ResponseState(final_answer=result.reply_text,
                                             confirmation_card=result.card)
             if result.degraded:

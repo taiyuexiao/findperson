@@ -140,6 +140,90 @@ class RawTagConceptLinker:
             result.update(action="review_enqueued", reason=decision["decision"])
         return result
 
+    async def link_tag(self, text: str) -> dict:
+        """标签→概念链接(不含人员关系,供 backend 写侧/事件消费者调用)。
+
+        §7.4 完整链路:五级召回 → 高置信自动映射 → 第六级 LLM 受约束消歧。
+        演示环境策略(审核队列仅作备查,结果立即可检索):
+        - LINK_EXISTING(候选内)→ auto_approved 挂接已有概念
+        - CREATE_CANDIDATE → 按 LLM 建议名建 seed 概念并挂接
+        - AMBIGUOUS/REJECT → 按原文建 seed 兜底(保持可检索,记入队列)
+        """
+        normalized = RawTag.normalize(text)
+        if not normalized:
+            raise AgentError(ErrorCode.INPUT_ERROR, "标签不能为空")
+
+        # RawTag 原样保存(已存在则复用,§7.1/§7.3)
+        tag = await get_concept_registry().get_raw_tag_by_text(normalized)
+        if tag is None:
+            tag_id = _new_id("tag")
+            await db.execute(
+                "INSERT INTO agent.raw_tags(tag_id, text, normalized_text) VALUES($1,$2,$3)",
+                tag_id, text.strip(), normalized,
+            )
+            tag = RawTag(tag_id=tag_id, text=text.strip(), normalized_text=normalized)
+
+        # 已有生效映射直接复用(第三级历史映射)
+        mappings = await get_concept_registry().load_tag_mappings()
+        if tag.tag_id in mappings:
+            return {"action": "reused", "concept_id": mappings[tag.tag_id][0].concept_id,
+                    "tag_id": tag.tag_id}
+
+        candidates = await self._recall.recall(text)
+
+        # 高置信确定性命中 → 自动映射(§7.4)
+        if candidates and candidates[0].candidate_score >= AUTO_MAP_THRESHOLD:
+            top = candidates[0]
+            await self._write_mapping(tag.tag_id, top.concept_id,
+                                      confidence=top.candidate_score,
+                                      generated_by="rule",
+                                      reason=f"{top.candidate_source} 高置信自动映射")
+            return {"action": "auto_mapped", "concept_id": top.concept_id, "tag_id": tag.tag_id}
+
+        # 第六级:LLM 受约束消歧
+        decision = await self._llm_disambiguate(text, candidates)
+        valid_ids = {c.concept_id for c in candidates}
+        if decision["decision"] == LinkDecision.LINK_EXISTING.value \
+                and decision.get("concept_id") in valid_ids:
+            await self._write_mapping(
+                tag.tag_id, decision["concept_id"], confidence=0.9, generated_by="llm",
+                review_status="auto_approved",
+                reason=decision.get("reason", "") or "LLM 受约束链接(演示环境自动生效)")
+            await self._enqueue("llm_link_audit",
+                                {"tag_id": tag.tag_id, "text": text,
+                                 "concept_id": decision["concept_id"],
+                                 "reason": decision.get("reason", "")})
+            return {"action": "linked", "concept_id": decision["concept_id"],
+                    "tag_id": tag.tag_id}
+        if decision["decision"] == LinkDecision.CREATE_CANDIDATE.value:
+            name = (decision.get("suggested_name") or text.strip())[:64]
+            cid = _new_id("concept")
+            await db.execute(
+                "INSERT INTO agent.concepts(concept_id, canonical_name, concept_type, status,"
+                " source_tags, description) VALUES($1,$2,'domain','seed',$3,$4)",
+                cid, name, [text.strip()],
+                "LLM 消歧建议建档(演示环境自动生效,审核队列备查)")
+            await self._write_mapping(tag.tag_id, cid, confidence=0.9, generated_by="llm",
+                                      review_status="auto_approved", reason="LLM 建议新概念建档")
+            await self._enqueue("llm_candidate_audit",
+                                {"tag_id": tag.tag_id, "text": text,
+                                 "concept_id": cid, "suggested_name": name})
+            return {"action": "created", "concept_id": cid, "tag_id": tag.tag_id}
+        # AMBIGUOUS/REJECT/非法输出:按原文建 seed 兜底(保持可检索),记审核队列
+        cid = _new_id("concept")
+        await db.execute(
+            "INSERT INTO agent.concepts(concept_id, canonical_name, concept_type, status,"
+            " source_tags, description) VALUES($1,$2,'domain','seed',$3,$4)",
+            cid, text.strip(), [text.strip()],
+            "消歧不明,按原文兜底建档(审核队列备查)")
+        await self._write_mapping(tag.tag_id, cid, confidence=0.5, generated_by="rule",
+                                  review_status="auto_approved", reason="消歧不明兜底建档")
+        await self._enqueue("ambiguous_mapping",
+                            {"tag_id": tag.tag_id, "text": text,
+                             "candidates": [c.model_dump() for c in candidates],
+                             "llm_decision": decision})
+        return {"action": "fallback_created", "concept_id": cid, "tag_id": tag.tag_id}
+
     async def _llm_disambiguate(self, text: str, candidates) -> dict:
         """LLM 受约束消歧:输入候选,输出四选一(§7.4)。"""
         llm = self._llm or get_llm()

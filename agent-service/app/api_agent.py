@@ -43,6 +43,19 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class TagLinkRequest(BaseModel):
+    """标签→概念链接请求(backend 写侧调用)。"""
+
+    text: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/tags/link")
+async def link_tag(body: TagLinkRequest):
+    """标签→概念链接(§7.4 五级召回 + LLM 受约束消歧;backend 写侧同步调用)。"""
+    from app.agent.concept_governance import RawTagConceptLinker
+    return await RawTagConceptLinker().link_tag(body.text)
+
+
 async def _build_user_context(x_user_id: str | None) -> UserContext:
     """[Demo 身份适配器] X-User-Id → 可信 user_context。未认证不进入 Agent(§5.1)。"""
     if not x_user_id:

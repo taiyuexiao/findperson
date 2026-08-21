@@ -26,7 +26,7 @@ from app.core import db
 from app.core.observability import get_metrics, persist_trace
 
 RANK_LABELS = ["首推", "可协助", "相关人员"]
-MAX_CARDS = 3  # v4 §四:找人类问题返回至多三位候选人
+MAX_CARDS = 5  # 与回答正文的命中人数上限对齐(正文提到的人要有对应名片)
 
 
 def _event(event_type: str, ids: dict, **data: Any) -> dict:
@@ -131,6 +131,21 @@ class AguiService:
         except Exception:  # noqa: BLE001 —— 会话落库失败不阻断回答
             pass
         history = await load_history(session_id)
+        # 结构化短期记忆注入(运行产物组装,零额外 LLM):意图/结构化 prompt 读到精确槽位状态
+        from app.agent.memory import append_memory_round, load_memory_lines
+        memory_lines = await load_memory_lines(session_id)
+        if memory_lines:
+            history = ([{"role": "memory", "text": line} for line in memory_lines] + history)
+        # 多轮续接通道(零 LLM):有待确认写操作卡 + 续接特征 → 直接合并草稿出卡
+        from app.agent.action_drafts import is_continuation
+        pending_card = await self._last_pending_card(session_id)
+        if pending_card and is_continuation(text, pending_card):
+            async for event in self._run_continuation(
+                    session_id=session_id, text=text, ids=ids, trace_id=trace_id,
+                    user_context=user_context, user_message_id=user_message_id,
+                    pending_card=pending_card):
+                yield event
+            return
         state = AgentState(request=RequestState(
             trace_id=trace_id, run_id=ids["runId"], session_id=session_id,
             user_context=user_context, original_query=text,
@@ -192,6 +207,15 @@ class AguiService:
             await self._log_recommendation(final, ids=ids, trace_id=trace_id,
                                            user_id=user_context.user_id, query=text)
             await self._patch_session(session_id, title=text, summary=summary)
+            # 结构化短期记忆:本轮产物组装 round 摘要(意图/动作/槽位/状态),零额外 LLM
+            card = final.response.confirmation_card
+            await append_memory_round(session_id, {
+                "q": text[:30],
+                "intent": final.intent.intent.value if final.intent.intent else "",
+                "action": (card.get("action") or {}).get("type", "") if card else "",
+                "slots": self._slots_summary(card),
+                "status": "待确认卡片" if card else "已回答",
+            })
         except Exception:  # noqa: BLE001
             pass
 
@@ -200,6 +224,95 @@ class AguiService:
         })
         yield _event("run_finished", ids, degraded=final.execution.degraded,
                      latencyMs=int((time.perf_counter() - started) * 1000))
+
+    # ---------------- 多轮续接通道 ----------------
+
+    @staticmethod
+    def _slots_summary(card: dict | None) -> str:
+        """从确认卡提取槽位摘要(结构化记忆用)。"""
+        action = (card or {}).get("action") or {}
+        patch = action.get("nextProfilePatch")
+        if patch:
+            return ",".join(f"{k}={v}" for k, v in patch.items() if not k.startswith("_"))[:80]
+        review = action.get("nextReview")
+        if review:
+            return f"{review.get('personName', '')}:{review.get('tag', '')}"[:80]
+        content = action.get("nextContent")
+        if content:
+            return f"title={content.get('title', '')}"[:80]
+        return ""
+
+    @staticmethod
+    async def _last_pending_card(session_id: str) -> dict | None:
+        """最近一条助手消息里尚未被 confirm 事件消费的确认卡;无则 None。"""
+        try:
+            row = await db.fetchrow(
+                "SELECT cards FROM agent.agui_messages"
+                " WHERE session_id=$1 AND role='assistant' AND cards IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1", session_id)
+            if not row:
+                return None
+            cards = row["cards"]
+            if isinstance(cards, str):
+                cards = json.loads(cards)
+            for card in (cards or []):
+                if card.get("kind") != "confirmation":
+                    continue
+                if card.get("status") not in (None, "active"):
+                    continue
+                confirmed = await db.fetchval(
+                    "SELECT 1 FROM agent.feedback_events"
+                    " WHERE target_id=$1 AND value LIKE 'confirm_%' LIMIT 1",
+                    card.get("id"))
+                if not confirmed:
+                    return card
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    async def _run_continuation(self, *, session_id: str, text: str, ids: dict,
+                                trace_id: str, user_context: UserContext,
+                                user_message_id: str, pending_card: dict):
+        """续接通道:合并上一张草稿出新确认卡,零 LLM,毫秒级。"""
+        from app.agent.action_drafts import build_continuation_card
+        from app.agent.memory import append_memory_round
+
+        card = build_continuation_card(pending_card, text, run_id=ids["runId"])
+        action_type = card["action"]["type"]
+        analysis = {"intent": "edit", "actionType": action_type,
+                    "summary": card["analysis"]["summary"], "continuation": True}
+        reply = "已在上一张草稿卡片的基础上合并你的补充，确认后生效。"
+        try:
+            await self._save_message(
+                session_id=session_id,
+                message_id=user_message_id or f"msg-u-{uuid.uuid4().hex[:12]}",
+                run_id=ids["runId"], trace_id=trace_id,
+                user_id=user_context.user_id, role="user", text=text)
+        except Exception:  # noqa: BLE001
+            pass
+        yield _event("run_started", ids, result={"analysis": analysis})
+        for i in range(0, len(reply), 24):
+            yield _event("text_delta", ids, delta=reply[i : i + 24])
+        yield _event("text_finished", ids)
+        yield _event("confirmation_card", ids, card=card)
+        try:
+            await self._save_message(session_id=session_id, message_id=ids["messageId"],
+                                     run_id=ids["runId"], trace_id=trace_id,
+                                     user_id=user_context.user_id, role="assistant",
+                                     text=reply, analysis=analysis, cards=[card])
+            await self._patch_session(session_id, title=text,
+                                      summary=f"{text[:24]} edit")
+            await append_memory_round(session_id, {
+                "q": text[:30], "intent": "edit", "action": action_type,
+                "slots": self._slots_summary(card), "status": "待确认卡片(续接合并)",
+            })
+        except Exception:  # noqa: BLE001
+            pass
+        yield _event("state_delta", ids, patch={
+            "title": text[:28], "turnCountIncrement": 1,
+            "summary": f"{text[:24]} edit",
+        })
+        yield _event("run_finished", ids, degraded=False, latencyMs=0)
 
     # ---------------- 事件内容构建 ----------------
 

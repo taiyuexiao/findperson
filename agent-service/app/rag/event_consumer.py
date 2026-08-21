@@ -90,6 +90,15 @@ async def process_pending_events() -> dict:
 
 async def run_event_consumer(stop: asyncio.Event) -> None:
     """后台轮询任务(main.py startup 启动,shutdown 置 stop)。"""
+    # 启动时把上轮失败事件重新入队一次(覆盖服务重启窗口/瞬时异常);
+    # 本轮再失败仍标 failed,避免持久错误死循环
+    try:
+        reset = await db.execute(
+            "UPDATE rag.publish_events SET status='pending' WHERE status='failed'")
+        if reset and reset != "UPDATE 0":
+            logger.info("publish_events 失败事件重入队: %s", reset)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("publish_events 失败事件重入队异常: %s", e)
     while not stop.is_set():
         try:
             stats = await process_pending_events()
