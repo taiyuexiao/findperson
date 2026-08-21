@@ -4,12 +4,12 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
-from ...middleware.deps import require_admin
+from ...middleware.deps import get_current_user, require_admin
 from ...models.department import Department
 from ...models.user import User
 from ...schemas.departments import (
     DepartmentCreateRequest, DepartmentUpdateRequest,
-    DepartmentResponse, DepartmentTreeNode,
+    DepartmentResponse, DepartmentTreeNode, ResponsibilityUpdateRequest,
 )
 from ...services.publish_event import emit_publish_event, PERSON_CHANGED
 
@@ -90,6 +90,20 @@ def update_department(dept_id: int, body: DepartmentUpdateRequest, request: Requ
     if changed_person_ids:
         db.commit()
 
+    return dept
+
+
+@router.patch("/{dept_id}/responsibility", response_model=DepartmentResponse, summary="Update Department Responsibility", description="部门负责人编辑职责(仅负责人,非负责人/管理员不可)")
+def update_department_responsibility(dept_id: int, body: ResponsibilityUpdateRequest, request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    dept = db.query(Department).filter(Department.id == dept_id).first()
+    if not dept:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="部门不存在")
+    if dept.leader_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只有部门负责人可编辑部门职责")
+    dept.responsibility = body.responsibility
+    db.commit()
+    db.refresh(dept)
     return dept
 
 

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
@@ -24,7 +24,7 @@ class User(Base):
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
     role = Column(String(128), nullable=True)
     contact = Column(String(64), nullable=True)
-    domains = Column(ARRAY(String), nullable=True)
+    domains = Column(JSONB, nullable=True)
     self_portrait = Column(Text, nullable=True)
     manager_id = Column(String(32), nullable=True)  # 直接上级(users 自引用,树状汇报关系)
     completeness = Column(Integer, default=0)

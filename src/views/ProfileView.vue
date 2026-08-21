@@ -7,6 +7,7 @@
       :reviews="reviews.reviewsForPerson(person.id)"
       :department="directory.getDepartment(person.department)"
       :supervisor="supervisor"
+      :managed-departments="managedDepartments"
       @back="goBack"
       @content="openContent"
       @supervisor="openSupervisor"
@@ -31,6 +32,7 @@ const content = useContentStore();
 const reviews = useReviewsStore();
 const person = computed(() => directory.getPerson(route.params.id));
 const supervisor = computed(() => directory.getPersonSupervisor(person.value?.id));
+const managedDepartments = computed(() => directory.managedDepartments(person.value?.id));
 
 // 他画像数据源修复:进入主页时拉取该人员收到的全部评价(任何访问者可见)
 watch(person, (p) => { if (p?.id) reviews.loadPersonReviews(p.id); }, { immediate: true });

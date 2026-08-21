@@ -17,6 +17,7 @@ import {
   fetchPeople,
   flattenDepartmentTree,
   updateDepartment as updateServerDepartment,
+  updateDepartmentResponsibility as updateServerDepartmentResponsibility,
   updatePerson as updateServerPerson,
 } from "../services/api/people.js";
 import { getMockDepartments, getMockPeople, getMockRoles, saveMockDepartments, saveMockPeople, saveMockRoles } from "../services/mock/mockApi.js";
@@ -219,6 +220,24 @@ export const useDirectoryStore = defineStore("directory", {
       const department = this.getDepartment(departmentId);
       if (!department) return null;
       Object.assign(department, patch);
+      saveMockDepartments(this.departments);
+      return department;
+    },
+    /** 部门负责人保存职责（仅负责人可写，权限在后端校验） */
+    async saveDepartmentResponsibility(departmentId, responsibility) {
+      const department = this.getDepartment(departmentId);
+      if (!department) return null;
+      if (isServerMode()) {
+        try {
+          const saved = await updateServerDepartmentResponsibility(departmentId, responsibility);
+          department.responsibility = saved.responsibility || "";
+          return department;
+        } catch (error) {
+          console.warn("部门职责保存失败", error);
+          throw error;
+        }
+      }
+      department.responsibility = responsibility || "";
       saveMockDepartments(this.departments);
       return department;
     },

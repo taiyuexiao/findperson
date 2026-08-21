@@ -21,6 +21,11 @@ class DepartmentUpdateRequest(BaseModel):
     sort_order: int | None = None
 
 
+class ResponsibilityUpdateRequest(BaseModel):
+    """部门职责更新（仅部门负责人可编辑）"""
+    responsibility: str | None = None
+
+
 class DepartmentResponse(BaseModel):
     """部门详情"""
     id: int

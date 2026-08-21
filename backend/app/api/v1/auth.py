@@ -32,7 +32,8 @@ def _user_to_dict(user: User) -> dict:
 
 @router.post("/login", response_model=LoginResponse, summary="Login", description="账号密码登录")
 def login(body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.account == body.account).first()
+    # 登录按用户 id（PXXXX）匹配，大小写不敏感、去首尾空格；不再接受手机号/account
+    user = db.query(User).filter(User.id == body.account.strip().upper()).first()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
     if not user.active:

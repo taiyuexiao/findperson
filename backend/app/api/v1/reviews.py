@@ -1,4 +1,5 @@
 """他画像（标签）"""
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ from ...schemas.sessions import PaginatedResponse
 from ...services.publish_event import emit_publish_event, PERSON_CHANGED
 from ...services.tag_sync import sync_person_domain_tags, sync_tag_to_agent
 from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reviews", tags=["他画像"])
 
@@ -109,13 +112,17 @@ def approve_review(review_id: str, request: Request, db: Session = Depends(get_d
 
     review.status = "approved"
     review.resolved_at = datetime.now(timezone.utc)
-    # 1) agent 体系:peer_review 标签升为已放行(检索恢复全权重)
-    db.execute(
-        text("UPDATE agent.person_tags pt SET approval='approved'"
-             " FROM agent.raw_tags rt"
-             " WHERE pt.tag_id=rt.tag_id AND rt.normalized_text=:n"
-             "   AND pt.person_id=:p AND pt.source='peer_review'"),
-        {"n": " ".join(review.tag_name.split()).lower(), "p": review.person_id})
+    # 1) agent 体系:peer_review 标签升为已放行(尽力而为,失败不影响业务)
+    try:
+        with db.begin_nested():
+            db.execute(
+                text("UPDATE agent.person_tags pt SET approval='approved'"
+                     " FROM agent.raw_tags rt"
+                     " WHERE pt.tag_id=rt.tag_id AND rt.normalized_text=:n"
+                     "   AND pt.person_id=:p AND pt.source='peer_review'"),
+                {"n": " ".join(review.tag_name.split()).lower(), "p": review.person_id})
+    except Exception:  # noqa: BLE001
+        logger.warning("他画像标签放行同步 Agent 体系失败(已忽略): review=%s", review_id, exc_info=True)
     # 2) 归入本人负责领域(走 self 全量同步;domains 去重追加)
     target = db.query(User).filter(User.id == review.person_id).first()
     if target is not None:

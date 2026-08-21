@@ -22,9 +22,9 @@
 
       <el-tab-pane label="内容审核" name="audit"><ContentAudit /></el-tab-pane>
 
-      <el-tab-pane label="推荐反馈" name="feedback">
-        <!-- v-if 保证每次切入该页签都重新挂载拉数,反馈明细实时反映最新入库记录 -->
-        <FeedbackPanel v-if="activeTab === 'feedback'" />
+      <el-tab-pane label="Agent可观测" name="observability">
+        <!-- v-if 保证每次切入该页签都重新挂载拉数,观测数据实时反映最新链路 -->
+        <AgentObservability v-if="activeTab === 'observability'" />
       </el-tab-pane>
     </el-tabs>
 
@@ -54,8 +54,8 @@ import { useAdminStore } from "../stores/admin.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import ActivityTrend from "../components/admin/ActivityTrend.vue";
+import AgentObservability from "../components/admin/AgentObservability.vue";
 import ContentAudit from "../components/admin/ContentAudit.vue";
-import FeedbackPanel from "../components/admin/FeedbackPanel.vue";
 import MetricCard from "../components/admin/MetricCard.vue";
 import RankingList from "../components/admin/RankingList.vue";
 

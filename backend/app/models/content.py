@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, date
 
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Date, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from ..core.database import Base
@@ -13,7 +13,7 @@ class Content(Base):
     id = Column(String(32), primary_key=True)
     owner_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(256), nullable=False)
-    tags = Column(ARRAY(String), default=[])
+    tags = Column(JSONB, default=list)
     summary = Column(Text, nullable=False)
     body = Column(Text, nullable=True)
     status = Column(String(32), default="draft", index=True)  # draft / pending_review / published / rejected

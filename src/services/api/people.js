@@ -7,6 +7,7 @@ export const createPerson = (payload) => http.post("/people", payload);
 export const updatePerson = (id, payload) => http.patch(`/people/${id}`, payload);
 export const createDepartment = (payload) => http.post("/departments", payload);
 export const updateDepartment = (id, payload) => http.patch(`/departments/${id}`, payload);
+export const updateDepartmentResponsibility = (id, responsibility) => http.patch(`/departments/${id}/responsibility`, { responsibility });
 
 /** 后端部门树 → 前端平铺结构({id,name,parentId,leaderId,path,responsibility}) */
 export function flattenDepartmentTree(nodes, parentPath = [], parentId = "") {

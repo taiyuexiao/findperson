@@ -7,8 +7,14 @@ agent 不可达时按 seed_concepts.py 冷启动逻辑兜底建档(不影响业�
 与调用方同一事务,失败随业务回滚。
 
 供 reviews.py(他画像,source=peer_review)与 me.py(负责领域,source=self)共用。
+
+重要:Agent 标签体系(agent schema)由 Agent 团队设计,列结构与早期后端桥接代码
+的假设存在差异。此处的同步对业务(人员/画像/领域)而言是"尽力而为":同步失败
+只记告警,绝不阻断调用方的业务写入。业务数据(users.domains / peer_reviews)
+的持久化由调用方自身的 db.commit() 保证。
 """
 import json
+import logging
 import urllib.request
 import uuid
 
@@ -16,6 +22,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize(tag: str) -> str:
@@ -92,44 +100,57 @@ def sync_tag_to_agent(db: Session, *, person_id: str, tag: str, active: bool,
     """单个标签同步:raw_tags 判重 → person_tags 激活/新建 → 精确命中建映射。
 
     approval:他人标签未放行时写 'pending'(检索降权,视图分档);本人/管理员/已放行 'approved'。
+
+    与 Agent 体系同步为"尽力而为",失败仅记告警,不阻断业务写入。
     """
     if not tag or not tag.strip():
         return
     tag = tag.strip()
-    tag_id = _ensure_raw_tag(db, tag)
-    pt = db.execute(text("SELECT person_tag_id, approval FROM agent.person_tags"
-                         " WHERE person_id=:p AND tag_id=:t AND source=:s"),
-                    {"p": person_id, "t": tag_id, "s": source}).first()
-    if pt:
-        # 已存在:只更新激活态,不降级放行状态(approved 不因重复打标变回 pending)
-        db.execute(text("UPDATE agent.person_tags SET is_active=:a WHERE person_tag_id=:i"),
-                   {"a": active, "i": pt[0]})
-    elif active:
-        db.execute(text("INSERT INTO agent.person_tags"
-                        " (person_tag_id, person_id, tag_id, source, created_by, is_active, approval)"
-                        " VALUES(:i, :p, :t, :s, :c, TRUE, :ap)"),
-                   {"i": f"pt-{uuid.uuid4().hex[:8]}", "p": person_id, "t": tag_id,
-                    "s": source, "c": created_by, "ap": approval})
-    if active:
-        _auto_map_concept(db, tag_id, _normalize(tag), tag_text=tag)
+    try:
+        with db.begin_nested():
+            tag_id = _ensure_raw_tag(db, tag)
+            pt = db.execute(text("SELECT person_tag_id, approval FROM agent.person_tags"
+                                 " WHERE person_id=:p AND tag_id=:t AND source=:s"),
+                            {"p": person_id, "t": tag_id, "s": source}).first()
+            if pt:
+                # 已存在:只更新激活态,不降级放行状态(approved 不因重复打标变回 pending)
+                db.execute(text("UPDATE agent.person_tags SET is_active=:a WHERE person_tag_id=:i"),
+                           {"a": active, "i": pt[0]})
+            elif active:
+                db.execute(text("INSERT INTO agent.person_tags"
+                                " (person_tag_id, person_id, tag_id, source, created_by, is_active, approval)"
+                                " VALUES(:i, :p, :t, :s, :c, TRUE, :ap)"),
+                           {"i": f"pt-{uuid.uuid4().hex[:8]}", "p": person_id, "t": tag_id,
+                            "s": source, "c": created_by, "ap": approval})
+            if active:
+                _auto_map_concept(db, tag_id, _normalize(tag), tag_text=tag)
+    except Exception:  # noqa: BLE001
+        logger.warning("标签同步到 Agent 体系失败(已忽略): person=%s tag=%s",
+                       person_id, tag, exc_info=True)
 
 
 def sync_person_domain_tags(db: Session, *, person_id: str, domains: list[str]) -> None:
     """负责领域全量同步(source='self'):新集合外的自建标签停用,新标签建档并尝试概念映射。
 
     在 PUT /me/profile 更新 domains 时同事务调用,保证负责领域变更立即进入检索体系。
+
+    与 Agent 体系同步为"尽力而为",失败仅记告警,不阻断业务写入。
     """
     desired = {_normalize(d) for d in (domains or []) if d and d.strip()}
-    rows = db.execute(
-        text("SELECT pt.person_tag_id, rt.normalized_text FROM agent.person_tags pt"
-             " JOIN agent.raw_tags rt ON rt.tag_id = pt.tag_id"
-             " WHERE pt.person_id=:p AND pt.source='self' AND pt.is_active"),
-        {"p": person_id}).all()
-    for person_tag_id, normalized in rows:
-        if normalized not in desired:
-            db.execute(text("UPDATE agent.person_tags SET is_active=FALSE"
-                            " WHERE person_tag_id=:i"), {"i": person_tag_id})
-    for domain in (domains or []):
-        if domain and domain.strip():
-            sync_tag_to_agent(db, person_id=person_id, tag=domain, active=True,
-                              source="self", created_by="profile-api")
+    try:
+        with db.begin_nested():
+            rows = db.execute(
+                text("SELECT pt.person_tag_id, rt.normalized_text FROM agent.person_tags pt"
+                     " JOIN agent.raw_tags rt ON rt.tag_id = pt.tag_id"
+                     " WHERE pt.person_id=:p AND pt.source='self' AND pt.is_active"),
+                {"p": person_id}).all()
+            for person_tag_id, normalized in rows:
+                if normalized not in desired:
+                    db.execute(text("UPDATE agent.person_tags SET is_active=FALSE"
+                                    " WHERE person_tag_id=:i"), {"i": person_tag_id})
+            for domain in (domains or []):
+                if domain and domain.strip():
+                    sync_tag_to_agent(db, person_id=person_id, tag=domain, active=True,
+                                      source="self", created_by="profile-api")
+    except Exception:  # noqa: BLE001
+        logger.warning("负责领域同步到 Agent 体系失败(已忽略): person=%s", person_id, exc_info=True)

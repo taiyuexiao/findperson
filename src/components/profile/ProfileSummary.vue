@@ -13,7 +13,7 @@
       <button v-if="supervisor" class="supervisor-tag" type="button" @click="$emit('supervisor', supervisor.person.id)">上级：{{ supervisorText }}</button>
       <span v-else class="supervisor-tag">上级：{{ supervisorText }}</span>
     </div>
-    <p class="person-meta">联系方式：{{ person.contact }}</p>
+    <p class="person-meta">联系方式：{{ person.phone || person.contact || "未填写" }}</p>
     <div class="field-row">
       <span v-for="tag in person.domains" :key="tag" class="tag">{{ tag }}</span>
     </div>

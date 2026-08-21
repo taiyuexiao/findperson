@@ -8,6 +8,7 @@ import {
   createReview as createServerReview,
   deleteReview as deleteServerReview,
   fetchPendingReviews,
+  fetchPersonReviewHistory,
   fetchSentReviews,
   ignoreReview,
 } from "../services/api/reviews.js";

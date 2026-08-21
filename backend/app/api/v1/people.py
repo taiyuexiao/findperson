@@ -47,12 +47,12 @@ def create_person(body: PersonCreateRequest, request: Request, db: Session = Dep
     # 生成 id/账号:沿用 p-XXXX / PXXXX 序列
     max_num = 0
     for (uid,) in db.query(User.id).all():
-        m = re.fullmatch(r"p-(\d+)", uid or "")
+        m = re.fullmatch(r"P(\d+)", uid or "")
         if m:
             max_num = max(max_num, int(m.group(1)))
-    new_id = f"p-{max_num + 1:04d}"
-    # 登录账号约定为手机号(contact 优先,其次 phone),密码统一默认 123456
-    account = body.account or (body.contact or "").strip() or (body.phone or "").strip() or f"P{max_num + 1:04d}"
+    new_id = f"P{max_num + 1:04d}"
+    # 登录账号 = 工号 PXXXX（与 id 一致），密码统一默认 123456
+    account = body.account or new_id
     # 默认上级 = 部门负责人
     manager_id = body.managerId
     if not manager_id and body.departmentId:

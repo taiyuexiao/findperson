@@ -8,14 +8,14 @@
           </span>
           <div>
             <h1>欢迎进入首问必答平台</h1>
-            <p>支持用户名或手机号 + 密码登录。</p>
-            <p class="login-demo-hint">示例账号：123312312313　密码：123456</p>
+            <p>支持工号（PXXXX）+ 密码登录。</p>
+            <p class="login-demo-hint">示例账号：P0001　密码：swzr2026</p>
           </div>
         </div>
         <el-form class="login-form" :model="form" @submit.prevent>
           <label>
-            用户名/手机号
-            <el-input v-model="form.account" placeholder="请输入用户名或手机号" />
+            工号（PXXXX）
+            <el-input v-model="form.account" placeholder="请输入工号，如 P0001" />
           </label>
           <label>
             密码
