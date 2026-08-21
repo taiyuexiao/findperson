@@ -1,15 +1,21 @@
 """人员标签 → Agent 标签体系同步(核心业务流程 §四.7:画像/负责领域参与后续推荐)。
 
-raw_tags 判重 → person_tags 激活/新建 → 精确命中概念(canonical/alias)时自动建 tag_concept_map;
-未命中则按 seed_concepts.py 冷启动逻辑增量建 Seed Concept 并自动映射(新标签立即可检索)。
+raw_tags 判重 → person_tags 激活/新建 → 概念链接:
+精确命中概念(canonical/alias)直接建映射;未命中走 agent-service 的
+RawTagConceptLinker(§7.4 五级召回 + LLM 受约束消歧,原始标签归并到中间概念层);
+agent 不可达时按 seed_concepts.py 冷启动逻辑兜底建档(不影响业务写入)。
 与调用方同一事务,失败随业务回滚。
 
 供 reviews.py(他画像,source=peer_review)与 me.py(负责领域,source=self)共用。
 """
+import json
+import urllib.request
 import uuid
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from ..core.config import settings
 
 
 def _normalize(tag: str) -> str:
@@ -44,43 +50,66 @@ def _ensure_seed_concept(db: Session, tag_text: str) -> str:
     return cid
 
 
+def _link_via_agent(tag_text: str) -> str | None:
+    """调用 agent-service 的概念链接(§7.4);不可达/失败返回 None(调用方兜底)。"""
+    try:
+        req = urllib.request.Request(
+            f"{settings.AGENT_SERVICE_URL}/agent/tags/link",
+            data=json.dumps({"text": tag_text}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("concept_id")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _auto_map_concept(db: Session, tag_id: str, normalized: str, *, tag_text: str = "") -> None:
-    """精确命中概念/别名时自动建映射(auto_approved);未命中按 seed 逻辑增量建档后映射。"""
+    """精确命中概念/别名时直接建映射;未命中走 agent 概念链接(LLM 归并),兜底自动建档。"""
     row = db.execute(
         text("SELECT c.concept_id FROM agent.concepts c"
              " WHERE c.status IN ('seed','active') AND lower(c.canonical_name)=:n"
              " UNION SELECT a.concept_id FROM agent.concept_aliases a"
              " WHERE lower(a.alias)=:n LIMIT 1"),
         {"n": normalized}).first()
-    concept_id = row[0] if row else _ensure_seed_concept(db, tag_text or normalized)
+    concept_id = row[0] if row else None
+    if concept_id is None:
+        concept_id = _link_via_agent(tag_text or normalized)
+    if concept_id is None:
+        concept_id = _ensure_seed_concept(db, tag_text or normalized)
     db.execute(text("INSERT INTO agent.tag_concept_map"
                     " (map_id, tag_id, concept_id, mapping_type, confidence,"
                     "  generated_by, review_status, reason)"
                     " VALUES(:i, :t, :c, 'exact_alias', 1.0, 'rule', 'auto_approved', :r)"
                     " ON CONFLICT (tag_id, concept_id) DO NOTHING"),
                {"i": f"map-{uuid.uuid4().hex[:8]}", "t": tag_id, "c": concept_id,
-                "r": "标准名精确匹配" if row else "新标签自动建档 seed 概念"})
+                "r": "标准名精确匹配" if row else "概念链接(LLM 归并)或兜底建档"})
 
 
 def sync_tag_to_agent(db: Session, *, person_id: str, tag: str, active: bool,
-                      source: str = "peer_review", created_by: str = "review-api") -> None:
-    """单个标签同步:raw_tags 判重 → person_tags 激活/新建 → 精确命中建映射。"""
+                      source: str = "peer_review", created_by: str = "review-api",
+                      approval: str = "approved") -> None:
+    """单个标签同步:raw_tags 判重 → person_tags 激活/新建 → 精确命中建映射。
+
+    approval:他人标签未放行时写 'pending'(检索降权,视图分档);本人/管理员/已放行 'approved'。
+    """
     if not tag or not tag.strip():
         return
     tag = tag.strip()
     tag_id = _ensure_raw_tag(db, tag)
-    pt = db.execute(text("SELECT person_tag_id FROM agent.person_tags"
+    pt = db.execute(text("SELECT person_tag_id, approval FROM agent.person_tags"
                          " WHERE person_id=:p AND tag_id=:t AND source=:s"),
                     {"p": person_id, "t": tag_id, "s": source}).first()
     if pt:
+        # 已存在:只更新激活态,不降级放行状态(approved 不因重复打标变回 pending)
         db.execute(text("UPDATE agent.person_tags SET is_active=:a WHERE person_tag_id=:i"),
                    {"a": active, "i": pt[0]})
     elif active:
         db.execute(text("INSERT INTO agent.person_tags"
-                        " (person_tag_id, person_id, tag_id, source, created_by, is_active)"
-                        " VALUES(:i, :p, :t, :s, :c, TRUE)"),
+                        " (person_tag_id, person_id, tag_id, source, created_by, is_active, approval)"
+                        " VALUES(:i, :p, :t, :s, :c, TRUE, :ap)"),
                    {"i": f"pt-{uuid.uuid4().hex[:8]}", "p": person_id, "t": tag_id,
-                    "s": source, "c": created_by})
+                    "s": source, "c": created_by, "ap": approval})
     if active:
         _auto_map_concept(db, tag_id, _normalize(tag), tag_text=tag)
 

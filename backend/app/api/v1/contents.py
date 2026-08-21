@@ -105,6 +105,7 @@ def create_content(
     # 状态映射
     eng_status = _STATUS_REVERSE.get(body.status, "draft") if body.status else "draft"
 
+    now = datetime.now(timezone.utc)
     content = Content(
         id=content_id,
         owner_id=user.id,
@@ -113,8 +114,12 @@ def create_content(
         summary=body.summary,
         body=body.body,
         status=eng_status,
-        submitted_at=datetime.now(timezone.utc) if eng_status == "pending_review" else None,
+        submitted_at=now if eng_status == "pending_review" else None,
     )
+    if eng_status == "published":
+        # 直接以已发布创建(管理端/导入):补 published_at 并发索引事件,与审核通过链路语义一致
+        content.published_at = (now + timedelta(hours=8)).date()
+        emit_publish_event(db, CONTENT_PUBLISHED, content.id, created_by=user.id)
     db.add(content)
     db.commit()
     db.refresh(content)

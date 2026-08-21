@@ -14,6 +14,9 @@ class PeerReview(Base):
     person_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     reviewer_id = Column(String(32), ForeignKey("users.id"), nullable=False)
     tag_name = Column(String(64), nullable=False)
+    # 信任分级:他人打的标签需被评价人放行后才获全权重(pending/approved/ignored)
+    status = Column(String(16), nullable=False, default="approved")
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     person_user = relationship("User", back_populates="received_reviews", lazy="joined",

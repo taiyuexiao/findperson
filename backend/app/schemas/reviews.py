@@ -18,6 +18,7 @@ class ReviewResponse(BaseModel):
     reviewer: str | None = Field(None, alias="reviewer")
     tag: str = Field(..., alias="tag")
     date: str | None = Field(None, alias="date")
+    status: str = Field("approved", alias="status")  # pending/approved/ignored(信任分级)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

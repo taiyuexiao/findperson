@@ -136,30 +136,31 @@ def feedback_summary(request: Request, db: Session = Depends(get_db)):
     up = sum(int(r.n) for r in totals if r.feedback_type == "like")
     down = sum(int(r.n) for r in totals if r.feedback_type == "dislike")
     total = up + down
-    # 近 7 天趋势(按自然日)
+    # 近 7 天趋势(按自然日,连续 7 天补齐 0 值,保证前端 7 柱完整呈现)
     trend_rows = db.execute(sa_text(
-        "SELECT date_trunc('day', created_at + interval '8 hours') AS day,"
-        "       feedback_type, count(*) AS n"
-        " FROM agent.feedback_events"
-        " WHERE feedback_type IN ('like','dislike')"
-        "   AND created_at >= now() - interval '7 days'"
-        " GROUP BY 1, 2 ORDER BY 1"
+        "SELECT to_char(d, 'MM-DD') AS day,"
+        "       COALESCE(sum((e.feedback_type='like')::int),0) AS up,"
+        "       COALESCE(sum((e.feedback_type='dislike')::int),0) AS down"
+        " FROM generate_series("
+        "   date_trunc('day', now() + interval '8 hours') - interval '6 days',"
+        "   date_trunc('day', now() + interval '8 hours'), interval '1 day') d"
+        " LEFT JOIN agent.feedback_events e"
+        "   ON date_trunc('day', e.created_at + interval '8 hours') = d"
+        "  AND e.feedback_type IN ('like','dislike')"
+        " GROUP BY 1, d ORDER BY d"
     )).all()
-    days: dict[str, dict] = {}
-    for r in trend_rows:
-        key = r.day.strftime("%m-%d")
-        slot = days.setdefault(key, {"day": key, "up": 0, "down": 0})
-        slot["up" if r.feedback_type == "like" else "down"] = int(r.n)
-    # 点踩原因分布
+    trend = [{"day": r.day, "up": int(r.up), "down": int(r.down)} for r in trend_rows]
+    # 点踩原因分布(与趋势同窗口:近 7 天)
     reason_rows = db.execute(sa_text(
         "SELECT COALESCE(NULLIF(reason,''),'未填写') AS reason, count(*) AS n"
         " FROM agent.feedback_events WHERE feedback_type='dislike'"
+        "   AND created_at >= now() - interval '7 days'"
         " GROUP BY 1 ORDER BY n DESC"
     )).all()
     return {
         "up": up, "down": down, "total": total,
         "helpfulRate": round(up / total * 100, 1) if total else 0,
-        "trend": list(days.values()),
+        "trend": trend,
         "reasons": [{"reason": r.reason, "count": int(r.n)} for r in reason_rows],
     }
 
@@ -204,3 +205,132 @@ def feedback_recent(
             "reason": r.reason or "",
         })
     return result
+
+
+# ---------------------------------------------------------------- Agent 可观测(验收:每轮问答全链路持久化 + 管理员工具)
+
+@router.get("/traces", summary="Agent Traces", description="Agent 运行轨迹列表(分页/搜索)")
+def list_traces(
+    request: Request,
+    keyword: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    from sqlalchemy import text as sa_text
+    where = ""
+    params: dict = {}
+    if keyword:
+        where = "WHERE (t.original_query ILIKE :kw OR u.name ILIKE :kw)"
+        params["kw"] = f"%{keyword}%"
+    total = db.execute(sa_text(
+        f"SELECT count(*) FROM agent.agent_traces t"
+        f" LEFT JOIN public.users u ON u.id = t.user_id {where}"), params).scalar() or 0
+    rows = db.execute(sa_text(
+        "SELECT * FROM ("
+        " SELECT DISTINCT ON (t.trace_id) t.trace_id, t.created_at, t.original_query,"
+        "        t.total_latency_ms, t.degraded,"
+        "        u.name AS user_name, m.analysis, l.gate_decision, l.rank_policy"
+        " FROM agent.agent_traces t"
+        " LEFT JOIN public.users u ON u.id = t.user_id"
+        " LEFT JOIN agent.agui_messages m ON m.trace_id = t.trace_id AND m.role = 'assistant'"
+        " LEFT JOIN agent.agent_recommendation_logs l ON l.trace_id = t.trace_id"
+        f" {where}"
+        " ORDER BY t.trace_id, m.id NULLS LAST, l.id NULLS LAST"
+        ") x ORDER BY x.created_at DESC LIMIT :limit OFFSET :offset"),
+        {**params, "limit": page_size, "offset": (page - 1) * page_size}).all()
+    import json as _json
+    items = []
+    for r in rows:
+        analysis = r.analysis if isinstance(r.analysis, dict) else (_json.loads(r.analysis) if r.analysis else {})
+        items.append({
+            "traceId": r.trace_id,
+            "createdAt": (r.created_at + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+            "query": r.original_query,
+            "user": r.user_name or "",
+            "latencyMs": round(r.total_latency_ms or 0),
+            "degraded": r.degraded,
+            "intent": (analysis or {}).get("intent") or "",
+            "queryType": (analysis or {}).get("queryType") or "",
+            "gateDecision": r.gate_decision or "",
+            "rankPolicy": r.rank_policy or "",
+        })
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/traces/{trace_id}", summary="Agent Trace Detail", description="单条轨迹全链路详情(节点/概念/RAG/MCP/推荐/回答/反馈)")
+def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    from sqlalchemy import text as sa_text
+    import json as _json
+
+    trace = db.execute(sa_text(
+        "SELECT t.trace_id, t.run_id, t.session_id, t.created_at, t.original_query,"
+        "       t.total_latency_ms, t.degraded, u.name AS user_name"
+        " FROM agent.agent_traces t LEFT JOIN public.users u ON u.id = t.user_id"
+        " WHERE t.trace_id = :tid"), {"tid": trace_id}).first()
+    if not trace:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="轨迹不存在")
+
+    def _loads(v):
+        return _json.loads(v) if isinstance(v, str) and v else (v or None)
+
+    spans = db.execute(sa_text(
+        "SELECT node_name, status, latency_ms, degraded, error_code, llm_tokens,"
+        "       tool_calls, input_summary, output_summary"
+        " FROM agent.agent_node_spans WHERE trace_id = :tid ORDER BY id"), {"tid": trace_id}).all()
+    concept = db.execute(sa_text(
+        "SELECT query, link_trace, resolved_concepts, created_at"
+        " FROM agent.query_concept_logs WHERE trace_id = :tid ORDER BY id DESC LIMIT 1"),
+        {"tid": trace_id}).first()
+    mcp_calls = db.execute(sa_text(
+        "SELECT tool, params, ok, latency_ms, created_at"
+        " FROM agent.mcp_call_logs WHERE trace_id = :tid ORDER BY created_at"), {"tid": trace_id}).all()
+    rec = db.execute(sa_text(
+        "SELECT query_summary, query_type, rank_policy, ranked_candidates, gate_decision"
+        " FROM agent.agent_recommendation_logs WHERE trace_id = :tid ORDER BY id DESC LIMIT 1"),
+        {"tid": trace_id}).first()
+    messages = db.execute(sa_text(
+        "SELECT role, text, analysis, cards, created_at FROM agent.agui_messages"
+        " WHERE trace_id = :tid ORDER BY id"), {"tid": trace_id}).all()
+    feedbacks = db.execute(sa_text(
+        "SELECT feedback_type, value, reason, target_type, target_id, created_at"
+        " FROM agent.feedback_events WHERE trace_id = :tid ORDER BY id"), {"tid": trace_id}).all()
+
+    return {
+        "trace": {
+            "traceId": trace.trace_id, "runId": trace.run_id, "sessionId": trace.session_id,
+            "createdAt": (trace.created_at + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if trace.created_at else "",
+            "query": trace.original_query, "user": trace.user_name or "",
+            "latencyMs": round(trace.total_latency_ms or 0), "degraded": trace.degraded,
+        },
+        "spans": [{
+            "node": s.node_name, "status": s.status, "latencyMs": round(s.latency_ms or 0, 1),
+            "degraded": s.degraded, "errorCode": s.error_code, "llmTokens": s.llm_tokens,
+            "toolCalls": _loads(s.tool_calls) or [], "input": s.input_summary, "output": s.output_summary,
+        } for s in spans],
+        "conceptLink": ({
+            "query": concept.query,
+            "linkTrace": _loads(concept.link_trace) or [],
+            "resolvedConcepts": _loads(concept.resolved_concepts) or [],
+        } if concept else None),
+        "mcpCalls": [{
+            "tool": m.tool, "params": _loads(m.params) or {}, "ok": m.ok,
+            "latencyMs": round(m.latency_ms or 0, 1),
+        } for m in mcp_calls],
+        "recommendation": ({
+            "querySummary": rec.query_summary, "queryType": rec.query_type,
+            "rankPolicy": rec.rank_policy, "gateDecision": rec.gate_decision,
+            "candidates": _loads(rec.ranked_candidates) or [],
+        } if rec else None),
+        "messages": [{
+            "role": m.role, "text": m.text,
+            "analysis": _loads(m.analysis), "cards": _loads(m.cards) or [],
+        } for m in messages],
+        "feedbacks": [{
+            "type": f.feedback_type, "value": f.value, "reason": f.reason,
+            "targetType": f.target_type, "targetId": f.target_id,
+        } for f in feedbacks],
+    }
