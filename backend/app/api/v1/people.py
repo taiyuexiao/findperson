@@ -10,6 +10,7 @@ from ...middleware.deps import require_admin
 from ...models.user import User
 from ...schemas.people import PersonCreateRequest, PersonResponse, PersonUpdateRequest
 from ...services.publish_event import emit_publish_event, PERSON_CHANGED
+from ...services.tag_sync import sync_person_domain_tags
 
 router = APIRouter(prefix="/people", tags=["人员"])
 
@@ -34,8 +35,8 @@ def list_people(
         q = q.filter(User.department_id == department_id)
     total = q.count()
     items = q.order_by(User.id).offset((page - 1) * page_size).limit(page_size).all()
-    # 直接返回数组（前端需要平铺列表）
-    return [PersonResponse.model_validate(u).model_dump() for u in items]
+    # 直接返回数组（前端需要平铺列表）；by_alias 输出 camelCase 字段名
+    return [PersonResponse.model_validate(u).model_dump(by_alias=True) for u in items]
 
 
 @router.post("", response_model=PersonResponse, status_code=201, summary="Create Person", description="新增成员(仅管理员)")
@@ -114,6 +115,9 @@ def update_person(person_id: str, body: PersonUpdateRequest, request: Request, d
 
     for key, value in update_data.items():
         setattr(user, key, value)
+    # 负责领域变更 → 同步进标签检索体系(与 me.py 本人修改同一机制;backend 分支缺口补齐)
+    if "domains" in update_data:
+        sync_person_domain_tags(db, person_id=user.id, domains=user.domains or [])
     db.commit()
     db.refresh(user)
     emit_publish_event(db, PERSON_CHANGED, user.id, created_by=getattr(request.state, "user_id", None))

@@ -11,27 +11,27 @@ class DepartmentBrief(BaseModel):
 
 
 class PersonResponse(BaseModel):
-    """人员详情响应"""
+    """人员详情响应(camelCase 序列化对齐前端;populate_by_name 保持内部 snake_case 构造可用)"""
     id: str
     account: str
     name: str
     phone: str | None = None
-    system_role: str
-    department_id: int | None = None
+    system_role: str = Field(alias="systemRole")
+    department_id: int | None = Field(default=None, alias="departmentId")
     # 前端以字符串消费部门(与 auth/me 返回一致);ORM Department 对象在 validator 中转 name
     department: str | None = None
     role: str | None = None
     contact: str | None = None
     domains: list | None = None
-    self_portrait: str | None = None
+    self_portrait: str | None = Field(default=None, alias="selfPortrait")
     completeness: int
-    recommended_count: int
+    recommended_count: int = Field(alias="recommendedCount")
     active: bool
-    manager_id: str | None = None  # 直接上级人员 ID
-    last_login_at: datetime | None = None
-    created_at: datetime | None = None
+    manager_id: str | None = Field(default=None, alias="managerId")  # 直接上级人员 ID
+    last_login_at: datetime | None = Field(default=None, alias="lastLoginAt")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
     @field_validator("department", mode="before")
     @classmethod
