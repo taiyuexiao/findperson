@@ -40,12 +40,18 @@
               <ThreadTurn v-for="turn in turns" :key="turn.user.id">
                 <article class="thread-bubble user-bubble">
                   <p>{{ turn.user.text }}</p>
+                  <button class="copy-instruction-button" type="button" title="复制该指令"
+                          @click.stop="copyInstruction(turn.user)">
+                    <el-icon v-if="copiedInstructionId !== turn.user.id"><CopyDocument /></el-icon>
+                    <span v-else class="copied-tip">已复制</span>
+                  </button>
                 </article>
                 <AssistantBubble :message="turn.assistant" />
 
                 <RecommendationCardGroup
                   :cards="recommendationCards(turn.assistant.id)"
                   @profile="openProfile"
+                  @detail="agui.openPersonDetail"
                 />
 
                 <ActionCard
@@ -102,7 +108,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
-import { Memo } from "@element-plus/icons-vue";
+import { Memo, CopyDocument } from "@element-plus/icons-vue";
 import ActionCard from "../components/ask/ActionCard.vue";
 import AnswerFeedbackBar from "../components/ask/AnswerFeedbackBar.vue";
 import AssistantBubble from "../components/ask/AssistantBubble.vue";
@@ -155,6 +161,28 @@ const questionInput = computed({
 // 历史对话搜索(main 分支标准:侧栏搜索按钮 + 弹层检索标题/摘要)
 const historySearch = ref("");
 const isHistorySearchOpen = ref(false);
+const copiedInstructionId = ref("");
+let copiedTimer = null;
+
+async function copyInstruction(message) {
+  const text = message.text || "";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // 降级:隐藏 textarea 选区复制(非安全上下文兜底)
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+  copiedInstructionId.value = message.id;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => { copiedInstructionId.value = ""; }, 1500);
+}
 const searchedSessions = computed(() => sessions.searchSessions(historySearch.value));
 const turns = computed(() => {
   const messages = agui.activeMessages;
@@ -271,3 +299,36 @@ function confirmCardFromDetail() {
   if (cardId) agui.confirmCard(cardId);
 }
 </script>
+
+<style scoped>
+/* 用户指令气泡右上角复制按钮(蓝色气泡上的轻量白图标) */
+.user-bubble {
+  position: relative;
+}
+.copy-instruction-button {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  padding: 2px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+.user-bubble:hover .copy-instruction-button,
+.copy-instruction-button:focus-visible,
+.copy-instruction-button:hover {
+  opacity: 1;
+  color: #ffffff;
+}
+.copied-tip {
+  font-size: 11px;
+  color: #ffffff;
+  opacity: 1;
+}
+</style>

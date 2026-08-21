@@ -16,7 +16,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ProfileDetail from "../components/ProfileDetail.vue";
 import { useContentStore } from "../stores/content.js";
@@ -31,6 +31,9 @@ const content = useContentStore();
 const reviews = useReviewsStore();
 const person = computed(() => directory.getPerson(route.params.id));
 const supervisor = computed(() => directory.getPersonSupervisor(person.value?.id));
+
+// 他画像数据源修复:进入主页时拉取该人员收到的全部评价(任何访问者可见)
+watch(person, (p) => { if (p?.id) reviews.loadPersonReviews(p.id); }, { immediate: true });
 
 function goBack() {
   returnToSource(router, route, { name: "directory" });

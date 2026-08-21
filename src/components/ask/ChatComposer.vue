@@ -8,7 +8,9 @@
           :autosize="{ minRows: 1, maxRows: 5 }"
           placeholder="例如：我想申请大模型 Key，应该找谁？"
           @update:model-value="$emit('update:modelValue', $event)"
-          @keydown.enter.exact.prevent="$emit('send')"
+          @compositionstart="composing = true"
+          @compositionend="composing = false"
+          @keydown.enter.exact="onEnter"
         />
         <el-button class="primary-button composer-send-button" type="primary" :disabled="disabled" @click="$emit('send')">
           <el-icon><Right /></el-icon>
@@ -23,11 +25,22 @@
 </template>
 
 <script setup>
+import { ref } from "vue";
 import { Right } from "@element-plus/icons-vue";
 
 defineProps({
   modelValue: { type: String, default: "" },
   disabled: Boolean,
 });
-defineEmits(["update:modelValue", "send"]);
+const emit = defineEmits(["update:modelValue", "send"]);
+
+// 中文输入法组合态防护:组合期间/组合刚结束的回车是"上屏原文"(macOS 会以真实 Enter 送达),
+// 不得触发发送;只有确认不在组合态时才 preventDefault + 发送。
+const composing = ref(false);
+
+function onEnter(event) {
+  if (composing.value || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  emit("send");
+}
 </script>

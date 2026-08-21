@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <section class="view active vue-login-shell">
     <div class="login-shell">
       <div class="login-panel">
@@ -7,7 +7,7 @@
             <img :src="logoUrl" alt="">
           </span>
           <div>
-            <h1>欢迎进入首问责任平台</h1>
+            <h1>欢迎进入首问必答平台</h1>
             <p>支持用户名或手机号 + 密码登录。</p>
             <p class="login-demo-hint">示例账号：123312312313　密码：123456</p>
           </div>

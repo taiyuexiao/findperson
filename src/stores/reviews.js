@@ -1,12 +1,15 @@
-import { defineStore } from "pinia";
+﻿import { defineStore } from "pinia";
 import {
   getActiveUserId,
   getTodayText,
 } from "../state.js";
 import {
+  approveReview,
   createReview as createServerReview,
   deleteReview as deleteServerReview,
+  fetchPendingReviews,
   fetchSentReviews,
+  ignoreReview,
 } from "../services/api/reviews.js";
 import { getMockReviews, saveMockReviews } from "../services/mock/mockApi.js";
 import { isServerMode } from "../services/mode.js";
@@ -16,6 +19,7 @@ export const useReviewsStore = defineStore("reviews", {
   state: () => ({
     reviews: getMockReviews(),
     loaded: false,
+    pendingTags: [],  // 我收到的待放行他人标签(信任分级通知)
   }),
   getters: {
     sentReviews() {
@@ -35,6 +39,34 @@ export const useReviewsStore = defineStore("reviews", {
       if (this.loaded) return;
       this.reviews = isServerMode() ? await fetchSentReviews() : getMockReviews();
       this.loaded = true;
+    },
+    async loadPendingTags() {
+      if (!isServerMode()) { this.pendingTags = []; return; }
+      this.pendingTags = await fetchPendingReviews();
+    },
+    /** 拉取某人收到的全部评价并合入本地列表(他画像数据源:谁看谁都能看到,不再只是"我发出的") */
+    async loadPersonReviews(personId) {
+      if (!isServerMode() || !personId) return;
+      const result = await fetchPersonReviewHistory(personId);
+      const items = (Array.isArray(result) ? result : (result?.items || [])).map((r) => ({
+        id: r.id, personId: r.personId, reviewer: r.reviewer, tag: r.tag, date: r.date,
+        status: r.status || "approved",  // 信任分级:待放行标签也要在他画像展示(标注)
+      }));
+      // 该人的记录整体替换为服务端最新,其他人的不动
+      this.reviews = [...this.reviews.filter((r) => r.personId !== personId), ...items];
+    },
+    async approveTag(reviewId) {
+      await approveReview(reviewId);
+      this.pendingTags = this.pendingTags.filter((item) => item.id !== reviewId);
+      // 放行后本人负责领域已变化,刷新名录缓存
+      const { useDirectoryStore } = await import("./directory.js");
+      const directory = useDirectoryStore();
+      directory.loaded = false;
+      await directory.loadPeople();
+    },
+    async ignoreTag(reviewId) {
+      await ignoreReview(reviewId);
+      this.pendingTags = this.pendingTags.filter((item) => item.id !== reviewId);
     },
     reviewsForPerson(personId) {
       return this.reviews

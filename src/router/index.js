@@ -22,6 +22,7 @@ const routes = [
       { path: "publish", name: "publish", component: () => import("../views/PublishView.vue") },
       { path: "content/:id", name: "contentDetail", component: () => import("../views/ContentDetailView.vue") },
       { path: "admin", name: "admin", component: () => import("../views/AdminView.vue") },
+      { path: "agent-observability", name: "agentObservability", component: () => import("../views/AgentObservabilityView.vue") },
     ],
   },
 ];
@@ -47,6 +48,7 @@ router.beforeEach(async (to) => {
     useDirectoryStore().loadPeople(),
     useContentStore().loadContents(),
     useReviewsStore().loadReviews(),
+    useReviewsStore().loadPendingTags(),
     sessions.loadSessions(),
   ]);
   const authFailure = results.find(
@@ -59,7 +61,7 @@ router.beforeEach(async (to) => {
   results.forEach((r) => {
     if (r.status === "rejected") console.warn("数据加载失败(已放行导航):", r.reason);
   });
-  if (to.name === "admin" && !auth.isAdmin) return { name: "ask" };
+  if ((to.name === "admin" || to.name === "agentObservability") && !auth.isAdmin) return { name: "ask" };
   return true;
 });
 

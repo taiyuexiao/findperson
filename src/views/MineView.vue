@@ -34,6 +34,21 @@
       </section>
 
       <div class="portrait-split-grid profile-portrait-split-grid">
+        <section v-if="reviews.pendingTags.length" class="profile-block pending-tags-block">
+          <div class="content-section-head">
+            <div><h2>待确认标签</h2><p class="person-meta">同事给你打的标签：放行后归入你的负责领域并获得同等检索权重；不放行的标签检索时降权。</p></div>
+          </div>
+          <article v-for="item in reviews.pendingTags" :key="item.id" class="pending-tag-item">
+            <span><strong>{{ item.reviewer }}</strong> 给你打了标签：<span class="tag">{{ item.tag }}</span><span class="person-meta">　{{ item.date }}</span></span>
+            <span class="pending-tag-actions">
+              <el-button class="primary-button small-button" type="primary" @click="approveTag(item.id)">放行</el-button>
+              <el-button class="secondary-button small-button" @click="ignoreTag(item.id)">忽略</el-button>
+            </span>
+          </article>
+        </section>
+      </div>
+
+      <div class="portrait-split-grid profile-portrait-split-grid">
         <section class="profile-block self-portrait-block">
           <h2>自画像</h2>
           <p>{{ profile.selfPortrait }}</p>
@@ -82,7 +97,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
-import { ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { EditPen, Search } from "@element-plus/icons-vue";
 import PeerReviewList from "../components/profile/PeerReviewList.vue";
 import ProfileEditor from "../components/profile/ProfileEditor.vue";
@@ -192,6 +207,16 @@ function openReview() {
   router.push({ name: "review", query: { redirect: route.fullPath } });
 }
 
+async function approveTag(reviewId) {
+  await reviews.approveTag(reviewId);
+  ElMessage.success("已放行，标签已归入你的负责领域");
+}
+
+async function ignoreTag(reviewId) {
+  await reviews.ignoreTag(reviewId);
+  ElMessage.success("已忽略，该标签检索时将降权");
+}
+
 function openPublish() {
   router.push({ name: "publish", query: { redirect: route.fullPath } });
 }
@@ -201,6 +226,8 @@ function editContent(id) {
 }
 
 onMounted(() => {
+  reviews.loadPendingTags();  // 信任分级:待放行标签通知
+  reviews.loadPersonReviews(getActiveUserId());  // 他画像:拉我收到的全部评价
   const draft = drafts.get(route.query.draftId, "profile");
   if (route.query.edit !== "profile" || !draft) return;
   startEdit();
@@ -221,3 +248,13 @@ onBeforeRouteLeave(async () => {
   }
 });
 </script>
+
+<style scoped>
+.pending-tags-block { width: 100%; }
+.pending-tag-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 0; border-bottom: 1px solid #eef2f7;
+}
+.pending-tag-item:last-child { border-bottom: 0; }
+.pending-tag-actions { display: inline-flex; gap: 8px; flex: 0 0 auto; }
+</style>

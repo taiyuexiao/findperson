@@ -1,5 +1,7 @@
 <template>
-  <article class="result-card thread-card result-inline is-clickable" tabindex="0" @click="$emit('profile', card.personId)">
+  <article class="result-card thread-card result-inline is-clickable" tabindex="0"
+           title="单击查看详情，双击进入主页"
+           @click="onClick" @dblclick="onDblClick" @keydown.enter="onClick">
     <div class="person-head">
       <div>
         <p class="person-name">{{ person.name }}</p>
@@ -33,5 +35,22 @@ const supervisorText = computed(() => {
   return supervisor?.person?.name || "";
 });
 
-defineEmits(["profile"]);
+const emit = defineEmits(["profile", "detail"]);
+
+// 单击=右侧详情侧栏,双击=进主页;250ms 窗口区分单击/双击,避免双击时侧栏先闪
+let clickTimer = null;
+function onClick() {
+  if (clickTimer) return;
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    emit("detail", props.card.personId);
+  }, 250);
+}
+function onDblClick() {
+  if (clickTimer) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+  }
+  emit("profile", props.card.personId);
+}
 </script>

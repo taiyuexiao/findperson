@@ -3,7 +3,7 @@
     <div class="history-search-panel">
       <div class="history-search-input-wrap">
         <el-icon><Search /></el-icon>
-        <el-input :model-value="search" placeholder="搜索历史对话" clearable @update:model-value="$emit('update:search', $event)" />
+        <el-input :model-value="search" clearable @update:model-value="$emit('update:search', $event)" />
         <button class="history-search-close" type="button" @click="$emit('close')">Esc</button>
       </div>
       <div class="history-search-results">
