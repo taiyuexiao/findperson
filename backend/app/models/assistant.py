@@ -13,9 +13,9 @@ class RecommendationLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     message_id = Column(String(32), ForeignKey("messages.id"), nullable=True, index=True)
     session_id = Column(String(32), ForeignKey("sessions.id"), nullable=True, index=True)
-    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)  # 提问人
+    user_id = Column(String(32), ForeignKey("user2.id"), nullable=False, index=True)  # 提问人
     query_text = Column(Text, nullable=False)
-    person_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)  # 被推荐人
+    person_id = Column(String(32), ForeignKey("user2.id"), nullable=False, index=True)  # 被推荐人
     rank = Column(Integer, nullable=False)
     score = Column(Integer, nullable=False)
     reasons = Column(JSONB, default=[])  # [{kind, text}] 命中依据
@@ -27,7 +27,7 @@ class Feedback(Base):
     __tablename__ = "feedback"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(String(32), ForeignKey("user2.id"), nullable=False, index=True)
     target_type = Column(String(32), nullable=False)  # answer | person | content
     target_key = Column(String(256), nullable=False)  # e.g. 'answer:turn-xxx'
     value = Column(String(8), nullable=False)  # up | down

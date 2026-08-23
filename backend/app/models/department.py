@@ -13,7 +13,7 @@ class Department(Base):
     name = Column(String(64), nullable=False)
     level = Column(Integer, nullable=False)
     parent_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
-    leader_id = Column(String(32), ForeignKey("users.id"), nullable=True)
+    leader_id = Column(String(32), ForeignKey("user2.id"), nullable=True)
     responsibility = Column(Text, nullable=True)
     status = Column(String(16), default="active")
     sort_order = Column(Integer, default=0)

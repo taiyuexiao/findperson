@@ -13,7 +13,7 @@ def _new_id() -> str:
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "user2"
 
     id = Column(String(32), primary_key=True, default=_new_id)
     account = Column(String(64), unique=True, nullable=False, index=True)

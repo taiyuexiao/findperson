@@ -11,7 +11,7 @@ class Content(Base):
     __tablename__ = "contents"
 
     id = Column(String(32), primary_key=True)
-    owner_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    owner_id = Column(String(32), ForeignKey("user2.id"), nullable=False, index=True)
     title = Column(String(256), nullable=False)
     tags = Column(JSONB, default=list)
     summary = Column(Text, nullable=False)

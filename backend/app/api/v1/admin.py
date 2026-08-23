@@ -178,7 +178,7 @@ def feedback_recent(
         "       e.feedback_type, e.reason, e.trace_id, e.message_id,"
         "       e.payload, l.query_summary, l.ranked_candidates"
         " FROM agent.feedback_events e"
-        " LEFT JOIN public.users u ON u.id = e.user_id"
+        " LEFT JOIN public.user2 u ON u.id = e.user_id"
         " LEFT JOIN agent.agent_recommendation_logs l"
         "   ON l.trace_id = e.trace_id AND e.trace_id <> ''"
         "  AND l.message_id = e.message_id"
@@ -226,14 +226,14 @@ def list_traces(
         params["kw"] = f"%{keyword}%"
     total = db.execute(sa_text(
         f"SELECT count(*) FROM agent.agent_traces t"
-        f" LEFT JOIN public.users u ON u.id = t.user_id {where}"), params).scalar() or 0
+        f" LEFT JOIN public.user2 u ON u.id = t.user_id {where}"), params).scalar() or 0
     rows = db.execute(sa_text(
         "SELECT * FROM ("
         " SELECT DISTINCT ON (t.trace_id) t.trace_id, t.created_at, t.original_query,"
         "        t.total_latency_ms, t.degraded,"
         "        u.name AS user_name, m.analysis, l.gate_decision, l.rank_policy"
         " FROM agent.agent_traces t"
-        " LEFT JOIN public.users u ON u.id = t.user_id"
+        " LEFT JOIN public.user2 u ON u.id = t.user_id"
         " LEFT JOIN agent.agui_messages m ON m.trace_id = t.trace_id AND m.role = 'assistant'"
         " LEFT JOIN agent.agent_recommendation_logs l ON l.trace_id = t.trace_id"
         f" {where}"
@@ -268,7 +268,7 @@ def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db))
     trace = db.execute(sa_text(
         "SELECT t.trace_id, t.run_id, t.session_id, t.created_at, t.original_query,"
         "       t.total_latency_ms, t.degraded, u.name AS user_name"
-        " FROM agent.agent_traces t LEFT JOIN public.users u ON u.id = t.user_id"
+        " FROM agent.agent_traces t LEFT JOIN public.user2 u ON u.id = t.user_id"
         " WHERE t.trace_id = :tid"), {"tid": trace_id}).first()
     if not trace:
         from fastapi import HTTPException
