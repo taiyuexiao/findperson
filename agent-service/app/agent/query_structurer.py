@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from app.agent.orchestrator import AgentNode, ServiceRegistry
 from app.contracts.agent_state import (
     AgentState, Intent, StateUpdate, UnderstandingState,
@@ -57,6 +59,14 @@ class QueryStructurerService:
             if r["name"] in query:
                 state.mentioned_departments.append(r["name"])
                 state.field_sources[f"departments:{r['name']}"] = "explicit"
+
+        # 书名号内容原样保留为对象:文章标题是检索最强线索,防 LLM 泛化丢字
+        # (《智能问数的工作方法与要点》被抽成「智能问数」后区分度尽失)
+        for m in re.finditer(r"《([^》]{2,60})》", query):
+            title = m.group(1).strip()
+            if title and title not in state.objects:
+                state.objects.append(title)
+                state.field_sources[f"objects:{title}"] = "explicit"
 
         # 概念显式匹配:canonical_name 与 alias 命中即放入 mentioned_systems(大小写不敏感)
         query_lower = query.lower()

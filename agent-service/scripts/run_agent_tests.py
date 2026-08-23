@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from agent_test_cases import CASES  # noqa: E402
 
 BASE = "http://127.0.0.1:8100"
-USER = "p-0001"
+USER = "P0001"  # 真实库工号(刘成彦,管理员)
 REPORT = Path(__file__).resolve().parent / "agent_test_report.md"
 
 
