@@ -159,7 +159,8 @@ _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问必答�
 从用户的话里提取草稿字段,提取不到就留空,严禁编造。
 
 动作类型说明:
-- profile(资料维护):提取 nextProfilePatch,可含 contact(联系方式)/phone(手机号)/role(岗位)/domains(负责领域,数组)/selfPortrait(自画像)
+- profile(资料维护):提取 nextProfilePatch,可含 contact(联系方式)/phone(手机号)/role(岗位)/domains(负责领域,即标签,数组)/selfPortrait(自画像)
+  用户说「增加/添加标签X」「增加领域X」时,把 X 原样放入 domains 数组,不要判断 X 是否合理;X 照抄原文。
 - review(他人画像):提取 personName(被评价人姓名)与 tag(事项标签,不超过20字)
 - content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)/body(正文)。
   用户原话中标题声明(「标题是X」/《X》)之后的完整说明性文字是正文,body 必须照抄原文、不得概括或截断;
