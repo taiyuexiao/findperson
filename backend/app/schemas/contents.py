@@ -6,7 +6,7 @@ class ContentCreateRequest(BaseModel):
     """创建 / 提交内容"""
     title: str = Field(..., min_length=1, max_length=256)
     tags: list[str] = []
-    summary: str = Field(..., min_length=1)
+    summary: str = Field(default="", max_length=2000)  # 默认允许为空(未明确要求不填;可在右侧栏手动补)
     body: str | None = None
     status: str | None = None  # 前端传中文，如"待审核"
 
