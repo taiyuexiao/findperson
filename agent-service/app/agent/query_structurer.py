@@ -85,6 +85,19 @@ class QueryStructurerService:
                 state.mentioned_systems.append(alias)
                 state.field_sources[f"systems:{alias}"] = "explicit"
 
+        # 高频问句确定性兜底:「谁负责X/谁懂X/谁会X/X找谁」→ X 抽出为显式词项
+        # (LLM 对超短句抽取不稳定——同一句「谁会java」时灵时不灵;最常见找人句式必须规则化)
+        m = re.search(r"谁(?:负责|懂|会|喜欢|认识|管理|做)([^,，。！？!?\s]{1,30})", query)
+        if not m:
+            m = re.search(r"([^,，。！？!?\s]{1,30}?)找谁", query)
+        if not m:
+            m = re.search(r"找谁(?:办理|办|做|处理)([^,，。！？!?\s]{1,30})", query)
+        if m:
+            term = m.group(1).strip("的呢啊吧呀么")
+            if term and term not in state.mentioned_systems:
+                state.mentioned_systems.append(term)
+                state.field_sources[f"systems:{term}"] = "explicit"
+
         # ---- 2) LLM 要素抽取(模型推断,field_sources=inferred) ----
         # LLM 失败时仅保留词典显式匹配结果(§6.1:不产生虚假概念;词典结果在异常时不丢失)
         llm = self._llm or get_llm()
