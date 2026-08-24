@@ -169,6 +169,7 @@ export const useDirectoryStore = defineStore("directory", {
       const next = { ...patch };
       if (next.domainsText !== undefined) { next.domains = splitTags(next.domainsText); delete next.domainsText; }
       if (next.addDomains) { next.domains = Array.from(new Set([...(person.domains || []), ...next.addDomains])); delete next.addDomains; }
+      if (next.removeDomains) { const rm = new Set(next.removeDomains); next.domains = (person.domains || []).filter((d) => !rm.has(d)); delete next.removeDomains; }
       Object.assign(person, next);
       this.syncPersonDepartmentPath(person);
       if (personId === getActiveUserId()) {

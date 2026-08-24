@@ -60,10 +60,12 @@
       <div class="detail-card">
         <h3>标题</h3>
         <input class="detail-edit-input" :value="detail.draft?.title" @input="updateDraftField('title', $event.target.value)" />
-        <h3>标签(顿号分隔)</h3>
+        <h3>关联领域(顿号分隔)</h3>
         <input class="detail-edit-input" :value="(detail.draft?.tags || []).join('、')" @input="updateDraftField('tags', $event.target.value)" />
         <h3>摘要</h3>
         <textarea class="detail-edit-input" rows="3" :value="detail.draft?.summary" @input="updateDraftField('summary', $event.target.value)"></textarea>
+        <h3>正文</h3>
+        <textarea class="detail-edit-input detail-edit-body" :value="detail.draft?.body" @input="updateDraftField('body', $event.target.value)"></textarea>
       </div>
       <div class="thread-card-actions">
         <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmContent')">确认发布</button>
@@ -71,14 +73,35 @@
       </div>
     </template>
 
-    <!-- ── 他人画像/评价草稿(可直接修改) ── -->
+    <!-- ── 他人画像/评价草稿(人员结构与查人侧栏一致 + 草稿可编辑) ── -->
     <template v-else-if="detail.type === 'reviewAction'">
       <div class="detail-panel-top">
-        <div class="detail-panel-label">为他人画像</div>
+        <div class="detail-panel-label">为 {{ reviewPerson?.name || '同事' }} 画像</div>
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
+      <!-- 人员信息(与查人时右侧栏结构一致) -->
+      <div class="detail-header">
+        <h2>{{ reviewPerson?.name }}</h2>
+        <p>{{ departmentText(reviewPerson) }} · {{ reviewPerson?.role }}</p>
+        <p>联系方式：{{ reviewPerson?.contact }}</p>
+      </div>
+      <div class="field-row">
+        <span v-for="tag in reviewPerson?.domains" :key="tag" class="tag">{{ tag }}</span>
+      </div>
       <div class="detail-card">
-        <h2>为 {{ detail.action?.nextReview?.personName || '同事' }} 画像</h2>
+        <p>{{ reviewPerson?.selfPortrait }}</p>
+      </div>
+      <div class="detail-section">
+        <h3>相关发布内容</h3>
+        <div v-if="reviewPersonRelated.length" class="related-list">
+          <button v-for="item in reviewPersonRelated" :key="item.id" type="button" @click="$emit('content', item.id)">
+            {{ item.title }}
+          </button>
+        </div>
+        <div v-else class="empty-state compact">暂无相关发布内容。</div>
+      </div>
+      <!-- 本次评价草稿(可直接修改) -->
+      <div class="detail-card">
         <h3>能力标签</h3>
         <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" />
         <h3>评价内容</h3>
@@ -86,6 +109,7 @@
       </div>
       <div class="thread-card-actions">
         <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存评价</button>
+        <button class="secondary-button small-button" @click="$emit('profile', detail.action?.nextReview?.personId)">查看完整主页</button>
         <button class="secondary-button small-button" @click="$emit('mine')">去评价页修改</button>
       </div>
     </template>
@@ -171,11 +195,19 @@ const personRelated = computed(() => {
 
 const profileUser = computed(() => personOf(props.currentUserId));
 const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
+// 他人画像:被评价人详情(结构对齐查人侧栏)
+const reviewPerson = computed(() => personOf(props.detail?.action?.nextReview?.personId));
+const reviewPersonRelated = computed(() => {
+  const pid = props.detail?.action?.nextReview?.personId;
+  if (!pid) return [];
+  return props.content.filter((item) => item.ownerId === pid).slice(0, 4);
+});
 
 // ── 侧边栏直接修改(改动写回卡片 action,确认时生效) ──
 const PROFILE_FIELD_LABELS = {
   contact: '联系方式',
   addDomains: '负责领域(新增,顿号分隔)',
+  removeDomains: '负责领域(删除,顿号分隔)',
   domainsText: '负责领域',
   selfPortrait: '自画像',
 };
@@ -230,5 +262,13 @@ function updateReviewField(key, text) {
 .detail-card h3 {
   margin: 10px 0 4px;
   font-size: 13px;
+}
+/* 正文编辑框:大框+限高滚动(长正文上下滑动) */
+.detail-edit-body {
+  min-height: 220px;
+  max-height: 45vh;
+  overflow-y: auto;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 </style>

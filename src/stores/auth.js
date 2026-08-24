@@ -132,10 +132,10 @@ export const useAuthStore = defineStore("auth", {
       return "";
     },
     async updateProfile(patch) {
-      const allowed = ["contact", "domainsText", "selfPortrait", "addDomains"];
+      const allowed = ["contact", "domainsText", "selfPortrait", "addDomains", "removeDomains"];
       const profilePatch = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
       const person = useDirectoryStore().updatePerson(this.userId, profilePatch);
-      if (!person) return null;
+      if (!person) return { ok: false, message: "本地名录未同步到当前用户,请刷新页面后重试" };
       this.name = person.name;
       this.persist();
       if (isServerMode()) {

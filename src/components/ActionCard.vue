@@ -79,8 +79,8 @@
     <p>{{ action.description }}</p>
     <div class="publish-preview">
       <strong>{{ action.nextContent.title }}</strong>
-      <span>{{ action.nextContent.tags.join('、') }}</span>
-      <p>{{ action.nextContent.summary }}</p>
+      <span v-if="action.nextContent.tags && action.nextContent.tags.length">{{ action.nextContent.tags.join('、') }}</span>
+      <p v-if="action.nextContent.summary">{{ action.nextContent.summary }}</p>
     </div>
     <div class="thread-card-actions" @click.stop>
       <button v-if="isConfirmed" class="primary-button small-button" @click="$emit('content', action.nextContent.id)">
