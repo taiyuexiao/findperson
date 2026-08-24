@@ -33,7 +33,7 @@ _service = AguiService()
 _feedback_repo = FeedbackRepository()
 _feedback_service = FeedbackService()
 
-MAX_QUERY_LEN = 500
+MAX_QUERY_LEN = 10000  # 对话发布长文需要(正文照抄原文);仍兜底防滥用
 
 
 # ---------------------------------------------------------------- 请求模型

@@ -70,6 +70,10 @@ def is_continuation(text: str, pending_card: dict | None = None) -> bool:
     3. 含追加动词且与待确认草稿指向同一字段(如已有自画像草稿时说「在我的自画像后面加一句X」)。
     """
     t = text.strip()
+    # 防误判:新的写操作指令(发布/发表/投稿/删去/删除等)或长文本永远不算续接——
+    # 长文里只要含「补充/添加」就会被规则3误判(如正文提到『补充新的Skill』)
+    if re.match(r"^(发布|发表|投稿|写一?篇|发一?篇|删去|删除|移除|去掉)", t) or len(t) > 50:
+        return False
     if _CONT_MARK.search(t) or _REPLACE_MARK.search(t):
         return True
     if len(t) <= 12 and not re.search(r"谁|怎么|怎样|什么|哪|吗|呢|找|查|请问|发布|文章", t):
@@ -149,6 +153,7 @@ def build_continuation_card(card: dict, text: str, *, run_id: str) -> dict:
 # 注意:键名必须落前端确认白名单(auth store updateProfile):contact/addDomains/selfPortrait
 FIELD_LABELS = {
     "contact": "联系方式", "addDomains": "负责领域", "selfPortrait": "自画像",
+    "removeDomains": "负责领域(删除)",
 }
 
 # LLM/规则提取键 → 前端可维护键(不在白名单内的键确认时会被前端丢弃)
@@ -161,10 +166,21 @@ _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问必答�
 动作类型说明:
 - profile(资料维护):提取 nextProfilePatch,可含 contact(联系方式)/phone(手机号)/role(岗位)/domains(负责领域,即标签,数组)/selfPortrait(自画像)
   用户说「增加/添加标签X」「增加领域X」时,把 X 原样放入 domains 数组,不要判断 X 是否合理;X 照抄原文。
+  用户说「删去/删除/移除/去掉(我的)标签X」「删去(我的)领域X」时,把 X 原样放入 removeDomains 数组;X 照抄原文。
+  字段归属规则:用户明确点名字段时,必须放在点名的字段——说「自画像/画像/简介」放 selfPortrait、说「负责领域/标签/领域」放 domains、说「联系方式/电话」放 contact;不要根据内容长相自行改放其他字段(即使内容看起来像职责描述,只要用户说的是自画像就放 selfPortrait)。
 - review(他人画像):提取 personName(被评价人姓名)与 tag(事项标签,不超过20字)
-- content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)/body(正文)。
-  用户原话中标题声明(「标题是X」/《X》)之后的完整说明性文字是正文,body 必须照抄原文、不得概括或截断;
-  summary 取正文首句或用户显式给出的摘要。
+- content(内容发布):提取 title(标题)/tags(关联领域,数组)/summary(摘要)。
+  body 一律输出空字符串"":正文由系统按标题位置从原文截取,不经过你,不要在 body 里复述原文;
+  summary 与 tags 的规则(默认留空,严禁自行生成):
+  - 「摘要为:X」→ summary 照抄 X;「你给总结摘要/帮我总结摘要」→ 你根据 body 生成一句摘要;
+  - 「关联领域为:X」→ tags 照抄拆分 X;「你给总结关联领域/帮我总结关联领域」→ 你根据 body 归纳 1-3 个领域词;
+  - 用户未出现上述明确要求时,summary 与 tags 必须留空;
+  - 用户可同时提出多个要求,每个要求都要处理,不得遗漏。
+
+示例1(组合要求): 用户说「发布文章《月度复盘》,你给总结摘要,你给总结关联领域。正文:本月完成三项数据质量核查。」
+输出: {{"title": "月度复盘", "tags": ["数据治理", "质量核查"], "summary": "本月完成三项数据质量核查。", "body": ""}}
+示例2(未要求): 用户说「发布文章《月度复盘》,正文:本月完成三项数据质量核查。」
+输出: {{"title": "月度复盘", "tags": [], "summary": "", "body": ""}}
 
 严格输出 JSON(不要输出其他内容)。字段格式如下,值必须是从问题中提取的内容,严禁照抄示例中的空值:
 {schema}
@@ -172,7 +188,7 @@ _EXTRACT_PROMPT = """你是写操作草稿提取器。用户想在首问必答�
 用户问题: {query}"""
 
 _EXTRACT_SCHEMAS = {
-    ACTION_PROFILE: '{"nextProfilePatch": {"contact": "", "phone": "", "role": "", "domains": [], "selfPortrait": ""}}',
+    ACTION_PROFILE: '{"nextProfilePatch": {"contact": "", "phone": "", "role": "", "domains": [], "removeDomains": [], "selfPortrait": ""}}',
     ACTION_REVIEW: '{"personName": "", "tag": ""}',
     ACTION_CONTENT: '{"title": "", "tags": [], "summary": "", "body": ""}',
 }
@@ -229,6 +245,9 @@ class ActionDraftService:
         # 1) 本人资料维护:自我指代 + 资料类对象词(动词不限,防长尾)
         if re.search(r"(我的?|自己|本人)", q) and re.search(
                 r"(资料|信息|联系方式|电话|手机|邮箱|负责领域|领域|自画像|字画像|画像|岗位|主页|简介|自我介绍|签名)", q):
+            return ACTION_PROFILE
+        # 「删去/删除/移除我的标签X」→ 本人负责领域删除
+        if re.search(r"(删去|删除|移除|去掉).{0,8}(标签|领域)", q):
             return ACTION_PROFILE
         # 「给我自己/本人 添加X标签/领域」→ 本人负责领域
         if re.search(r"(为|给|帮)?(我自己|本人|我).{0,4}(添加|增加|加|补).{0,8}(标签|领域)", q):
@@ -310,6 +329,15 @@ class ActionDraftService:
     async def _build_profile(self, query, ctx: UserContext, *, run_id, extracted, names) -> ActionDraftResult:
         patch = {k: v for k, v in (extracted.get("nextProfilePatch") or {}).items()
                  if v not in (None, "", [])}
+        # LLM 偶发把数组字段返回成字符串,归一为数组
+        for list_key in ("addDomains", "removeDomains"):
+            if isinstance(patch.get(list_key), str):
+                patch[list_key] = [t.strip() for t in re.split(r"[,、,]", patch[list_key]) if t.strip()]
+        if not patch:
+            # 规则兑底 0:「删去/删除/移除(我的)(标签/领域) X」→ 负责领域删除
+            m = re.search(r"(?:删去|删除|移除|去掉)(?:我的)?(?:一?个|一条)?(?:标签|领域|负责领域)?[：:，,\s]*([^,，。！？!?]{1,20})", query)
+            if m:
+                patch = {"removeDomains": [m.group(1).strip()]}
         if not patch:
             # 规则兑底 1:「电话/联系方式 ... X」(兼容 改为/修改为/是 等说法)
             m = re.search(r"(?:联系方式|电话|手机)[^0-9]{0,6}([0-9][0-9\-]{3,})", query)
@@ -346,7 +374,7 @@ class ActionDraftService:
         # 追加语义:「新增/补充/添加/再加 X」且落到自画像/领域字段 → 与现有内容合并(避免覆盖原文)
         # 注:不再要求句中出现“画像”字样(「再加一句 红色警戒20年老玩家」这种省略说法也要追加)
         append_mode = patch.pop("_append", False) or bool(
-            re.search(r"(新增|添加|补充|加上|再加|再添|加一?句|补一?句|添一?句)", query)
+            re.search(r"(新增|添加|增加|补充|加上|再加|再添|加一?句|补一?句|添一?句)", query)
             and ("selfPortrait" in patch or "addDomains" in patch))
         if append_mode and patch.get("selfPortrait"):
             try:
@@ -451,14 +479,24 @@ class ActionDraftService:
         r_title, r_summary, r_body = self._extract_content_parts(query)
         title = title or r_title
         body = body or r_body
+        if not body and title:
+            # 标题锚定截取正文:长文正文不走 LLM(复述长文输出慢且易截断/超时),
+            # 按标题在原文中的位置取其后的全部文字,保真且瞬时
+            idx = query.find(title)
+            if idx >= 0:
+                rest = re.sub(r"^[，,。:：;；\s]+", "", query[idx + len(title):])
+                if len(rest) >= 2:
+                    body = rest.strip()
         summary = summary or r_summary
-        if body and not summary:
-            # 摘要缺省:取正文首句(≤60字)
-            first = re.split(r"[。!?!?\n]", body, maxsplit=1)[0].strip()
-            summary = (first or body)[:60]
+        # 摘要/关联领域默认不填:仅用户明确要求时保留(防 LLM 自行概括);
+        # 明确要求指:原文出现「摘要」(如 摘要为:X/你给总结摘要)或「关联领域/领域/标签」字样
+        if not re.search(r"摘要", query):
+            summary = ""
         tags = extracted.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in re.split(r"[,、,]", tags) if t.strip()]
+        if not re.search(r"(关联领域|领域|标签)", query):
+            tags = []
         if not title and body:
             # 标题实在抽不到但有正文:用正文首句当标题,保证草稿可用
             title = re.split(r"[。!?!?\n]", body, maxsplit=1)[0].strip()[:30] or "未命名内容"
@@ -467,8 +505,7 @@ class ActionDraftService:
                 action_type=ACTION_CONTENT,
                 reply_text="请补充内容标题和摘要(正文可手动补充),例如『发布文章《K8s 部署实践》,摘要:…』。",
                 missing=["title"])
-        # 摘要/正文缺失仍出部分草稿卡(v4 §五:手动补充经 draftId 跳转发布页回填)
-        missing = [k for k, v in (("summary", summary),) if not v]
+        # 摘要/关联领域未明确要求时保持为空(属正常草稿,不再视为缺失字段)
         card = self._card(ACTION_CONTENT, run_id, {
             "type": ACTION_CONTENT,
             "draftId": f"draft-{run_id}",
@@ -481,12 +518,6 @@ class ActionDraftService:
             "nextContent": {"title": title, "tags": tags,
                             "summary": summary, "body": body or summary},
         }, summary=f"发布内容:{title}")
-        if missing:
-            return ActionDraftResult(
-                action_type=ACTION_CONTENT, card=card,
-                reply_text=(f"已生成《{title}》的内容草稿,摘要/正文可点『手动补充』到发布页完善;"
-                            "确认发布后进入待审核状态(审核通过前不会对外公开)。"),
-                missing=missing)
         return ActionDraftResult(
             action_type=ACTION_CONTENT, card=card,
             reply_text="已生成内容草稿,确认发布后进入待审核状态(审核通过前不会对外公开)。",
