@@ -25,7 +25,7 @@ from app.core.cache import CacheKeys, get_cache
 RESOLVE_THRESHOLD = 0.9
 # 前三级 + prefix/subseq 为确定性级别可自动 resolved;
 # prefix = 问句短词对长概念名的前缀/包含匹配;subseq = 字符子序列匹配(缺字说法,唯一命中才生效)
-AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical", "prefix", "subseq")
+AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical", "prefix", "subseq", "contains")
 
 
 # 第 2.5 级前缀/包含匹配的词项停用表:通用动作/职能词不做前缀匹配
@@ -106,6 +106,21 @@ class ConceptCandidateRecall:
                             candidate_score=0.96, matched_text=text,
                             canonical_name=concepts[cid].canonical_name,
                         ))
+
+        # 第 2.55 级:包含匹配(验收:词根/后缀型口语词,如 报销→财务报销管理)
+        # 概念名包含查询词即可;词长≥2;唯一命中→0.95 进自动确认区;
+        # 多命中→0.85 仅候选(不进自动确认,防 数据/管理 类泛词错拉);通用词与前缀同表停用
+        if not candidates and len(normalized) >= 2 and normalized not in _PREFIX_STOP_TERMS:
+            hits = [c for c in concepts.values()
+                    if len(c.canonical_name) > len(normalized)
+                    and normalized in c.canonical_name.lower()]
+            unique = len(hits) == 1
+            for c in hits:
+                candidates.append(ConceptCandidate(
+                    concept_id=c.concept_id, candidate_source="contains",
+                    candidate_score=0.95 if unique else 0.85, matched_text=text,
+                    canonical_name=c.canonical_name,
+                ))
 
         # 第 2.6 级:子序列匹配(验收:会议申请→会议室申请;用户漏字/插字说法)
         # 仅短词对长名(防长问句误配);词长≥3;多概念歧义时不自动 resolved,只出候选
