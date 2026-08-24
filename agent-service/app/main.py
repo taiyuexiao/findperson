@@ -36,12 +36,16 @@ app.include_router(agui_router)
 
 @app.on_event("startup")
 async def _startup() -> None:
-    """应用启动:初始化 DB 连接池 + publish_events 消费轮询。"""
+    """应用启动:初始化 DB 连接池 + publish_events 消费轮询 + 未映射标签 LLM 归并轮询。"""
     await init_pool()
     from app.rag.event_consumer import run_event_consumer
     app.state.publish_event_stop = asyncio.Event()
     app.state.publish_event_task = asyncio.create_task(
         run_event_consumer(app.state.publish_event_stop))
+    from app.agent.tag_link_sweep import run_tag_link_sweep
+    app.state.tag_sweep_stop = asyncio.Event()
+    app.state.tag_sweep_task = asyncio.create_task(
+        run_tag_link_sweep(app.state.tag_sweep_stop))
 
 
 @app.on_event("shutdown")
@@ -50,6 +54,10 @@ async def _shutdown() -> None:
         app.state.publish_event_stop.set()
     if getattr(app.state, "publish_event_task", None):
         app.state.publish_event_task.cancel()
+    if getattr(app.state, "tag_sweep_stop", None):
+        app.state.tag_sweep_stop.set()
+    if getattr(app.state, "tag_sweep_task", None):
+        app.state.tag_sweep_task.cancel()
     await close_pool()
 
 

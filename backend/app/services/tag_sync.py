@@ -73,25 +73,26 @@ def _link_via_agent(tag_text: str) -> str | None:
 
 
 def _auto_map_concept(db: Session, tag_id: str, normalized: str, *, tag_text: str = "") -> None:
-    """精确命中概念/别名时直接建映射;未命中走 agent 概念链接(LLM 归并),兜底自动建档。"""
+    """精确命中概念/别名时直接建映射(快速确定性路径);
+    未命中:不在请求链路里做 LLM(慢且曾致写入超时/重复),也不盲目建碎片概念,
+    留为未映射,由 agent-service 的 tag_link_sweep 每30s 做 LLM 归并
+    (能挂已有概念就挂,确认是新事物才建新 seed 概念)。
+    """
     row = db.execute(
         text("SELECT c.concept_id FROM agent.concepts c"
              " WHERE c.status IN ('seed','active') AND lower(c.canonical_name)=:n"
              " UNION SELECT a.concept_id FROM agent.concept_aliases a"
              " WHERE lower(a.alias)=:n LIMIT 1"),
         {"n": normalized}).first()
-    concept_id = row[0] if row else None
-    if concept_id is None:
-        concept_id = _link_via_agent(tag_text or normalized)
-    if concept_id is None:
-        concept_id = _ensure_seed_concept(db, tag_text or normalized)
+    if not row:
+        logger.info("概念映射留待 LLM 归并(tag_link_sweep): %s", tag_text or normalized)
+        return
     db.execute(text("INSERT INTO agent.tag_concept_map"
                     " (map_id, tag_id, concept_id, mapping_type, confidence,"
                     "  generated_by, review_status, reason)"
-                    " VALUES(:i, :t, :c, 'exact_alias', 1.0, 'rule', 'auto_approved', :r)"
+                    " VALUES(:i, :t, :c, 'exact_alias', 1.0, 'rule', 'auto_approved', '标准名精确匹配')"
                     " ON CONFLICT (tag_id, concept_id) DO NOTHING"),
-               {"i": f"map-{uuid.uuid4().hex[:8]}", "t": tag_id, "c": concept_id,
-                "r": "标准名精确匹配" if row else "概念链接(LLM 归并)或兜底建档"})
+               {"i": f"map-{uuid.uuid4().hex[:8]}", "t": tag_id, "c": row[0]})
 
 
 def sync_tag_to_agent(db: Session, *, person_id: str, tag: str, active: bool,

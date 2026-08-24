@@ -22,6 +22,7 @@ from app.core.llm_client import LLMPort, get_llm
 AUTO_MAP_THRESHOLD = 0.97
 # LLM 消歧 Prompt(业务 Prompt 归本模块)
 DISAMBIGUATION_PROMPT = """你是企业概念治理助手。员工填写了一个"负责领域"标签,需要映射到企业标准概念。
+严格输出 JSON(不要输出任何其他内容)。
 
 员工填写: {raw_tag}
 
