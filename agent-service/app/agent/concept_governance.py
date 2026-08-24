@@ -29,6 +29,11 @@ DISAMBIGUATION_PROMPT = """你是企业概念治理助手。员工填写了一�
 候选标准概念(只能选择以下候选,不允许创造新概念 ID):
 {candidates}
 
+决策规则(严格遵守):
+- 仅当标签与某候选【确实指同一件事】(同义/同根,如 HiAgent平台→HiAgent)才选 LINK_EXISTING;
+- 只要语义不同——即使相关、即使同领域(如 算力芯片设计≠智芯工程、dns地址管理≠信息管理)——必须选 CREATE_CANDIDATE 建新概念;
+- 拿不准一律选 CREATE_CANDIDATE,严禁为了复用而硬挂。
+
 你只能输出以下四种之一:
 - {{"decision": "LINK_EXISTING", "concept_id": "<候选中的 concept_id>", "reason": "..."}}
 - {{"decision": "CREATE_CANDIDATE", "suggested_name": "<建议标准名>", "reason": "..."}}
