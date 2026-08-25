@@ -73,7 +73,7 @@
       </div>
     </template>
 
-    <!-- ── 他人画像/评价草稿(人员结构与查人侧栏一致 + 草稿可编辑) ── -->
+    <!-- ── 他人画像草稿(人员结构与查人侧栏一致 + 草稿可编辑) ── -->
     <template v-else-if="detail.type === 'reviewAction'">
       <div class="detail-panel-top">
         <div class="detail-panel-label">为 {{ reviewPerson?.name || '同事' }} 画像</div>
@@ -100,18 +100,18 @@
         </div>
         <div v-else class="empty-state compact">暂无相关发布内容。</div>
       </div>
-      <!-- 本次评价草稿(可直接修改) -->
+      <!-- 本次画像草稿(可直接修改) -->
       <div class="detail-card">
         <h3>能力标签</h3>
         <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" />
-        <h3>评价内容</h3>
+        <h3>画像内容</h3>
         <textarea class="detail-edit-input" rows="4" :value="detail.action?.nextReview?.text" @input="updateReviewField('text', $event.target.value)"></textarea>
       </div>
       <!-- 操作按钮上下排列,均独占一行蓝底白字 -->
       <div class="thread-card-actions detail-action-stack">
-        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存评价</button>
+        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存画像</button>
         <button class="primary-button small-button" @click="$emit('profile', detail.action?.nextReview?.personId)">查看完整主页</button>
-        <button class="primary-button small-button" @click="$emit('mine')">去评价页修改</button>
+        <button class="primary-button small-button" @click="$emit('mine')">去画像页修改</button>
       </div>
     </template>
 
@@ -196,7 +196,7 @@ const personRelated = computed(() => {
 
 const profileUser = computed(() => personOf(props.currentUserId));
 const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
-// 他人画像:被评价人详情(结构对齐查人侧栏)
+// 他人画像:被画像人详情(结构对齐查人侧栏)
 const reviewPerson = computed(() => personOf(props.detail?.action?.nextReview?.personId));
 const reviewPersonRelated = computed(() => {
   const pid = props.detail?.action?.nextReview?.personId;

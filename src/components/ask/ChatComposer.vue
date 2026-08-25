@@ -18,7 +18,7 @@
         </el-button>
       </div>
       <div class="composer-actions">
-        <span class="composer-helper">支持问题找人、信息维护、内容发布、评价补充</span>
+        <span class="composer-helper">支持问题找人、信息维护、内容发布、画像补充</span>
       </div>
     </div>
   </div>

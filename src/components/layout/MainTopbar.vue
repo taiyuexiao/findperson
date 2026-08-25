@@ -12,7 +12,7 @@
         <div v-if="!reviews.pendingTags.length" class="empty-state compact">暂无新通知</div>
         <article v-for="item in reviews.pendingTags" :key="item.id" class="notify-item">
           <p class="notify-text">
-            <strong>{{ item.reviewer }}</strong> 给你打了标签
+            <strong>{{ item.reviewer }}</strong> 为你添加了新画像
             <span class="tag">{{ item.tag }}</span>
             <span class="notify-date">{{ item.date }}</span>
           </p>
@@ -55,11 +55,11 @@ const pendingCount = computed(() => reviews.pendingTags.length);
 
 async function approve(id) {
   await reviews.approveTag(id);
-  ElMessage.success("已接受，标签已归入你的负责领域");
+  ElMessage.success("已接受");
 }
 async function ignore(id) {
   await reviews.ignoreTag(id);
-  ElMessage.success("已忽略，该标签检索时将降权");
+  ElMessage.success("已忽略");
 }
 </script>
 

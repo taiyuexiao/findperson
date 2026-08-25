@@ -268,10 +268,10 @@ export const useAguiStore = defineStore("agui", {
       if (action.type === "review") {
         const result = await useReviewsStore().saveReview(action.nextReview);
         if (result?.ok === false) {
-          ElMessage.error(result.message || "评价保存失败");
+          ElMessage.error(result.message || "画像保存失败");
           return;
         }
-        ElMessage.success("评价已保存");
+        ElMessage.success("画像已保存");
       }
       if (action.type === "content") {
         const saved = await useContentStore().saveContent(normalizeContentRecord(action.nextContent));

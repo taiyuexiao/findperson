@@ -1,4 +1,4 @@
-<!-- 操作卡片：用于问答页中资料维护、评价、内容发布等待确认动作 -->
+<!-- 操作卡片：用于问答页中资料维护、画像、内容发布等待确认动作 -->
 <template>
 
   <!-- ── 资料维护 ── -->
@@ -24,7 +24,7 @@
     </div>
   </article>
 
-  <!-- ── 他人评价 ── -->
+  <!-- ── 他人画像 ── -->
   <article
     v-else-if="action.type === 'review'"
     :class="['thread-card', 'action-card', latest ? 'is-pending' : '', 'is-clickable']"
@@ -50,13 +50,13 @@
         <span v-for="tag in reviewPerson.domains" :key="tag" class="tag">{{ tag }}</span>
       </div>
       <p class="person-meta person-portrait" v-if="reviewPerson?.selfPortrait">{{ reviewPerson.selfPortrait }}</p>
-      <p class="review-new-tag">本次评价：{{ action.nextReview.text || action.nextReview.tag }}（{{ action.nextReview.date }}）</p>
+      <p class="review-new-tag">本次画像：{{ action.nextReview.text || action.nextReview.tag }}（{{ action.nextReview.date }}）</p>
     </div>
     <div class="thread-card-actions review-card-actions" @click.stop>
       <button v-if="isConfirmed" class="primary-button small-button" @click="$emit('profile', action.nextReview.personId)">
-        查看评价对象
+        查看画像对象
       </button>
-      <button v-else class="primary-button small-button" @click="$emit('confirm', confirmKey)">确认保存评价</button>
+      <button v-else class="primary-button small-button" @click="$emit('confirm', confirmKey)">确认保存画像</button>
       <button class="secondary-button small-button" @click="$emit('edit', action)">
         {{ isConfirmed ? '继续补充' : '继续修改' }}
       </button>
@@ -116,7 +116,7 @@ const isConfirmed = computed(() => action.value.confirmed || props.card?.status 
 const confirmKey = computed(() => props.card?.id || action.value.type);
 const hasProfilePatch = computed(() => Object.keys(action.value.nextProfilePatch || {}).length > 0);
 
-/** 评价对象的人员信息(名录 store 为准,含上级/领域/自我介绍,与查人卡片对齐) */
+/** 画像对象的人员信息(名录 store 为准,含上级/领域/自我介绍,与查人卡片对齐) */
 const directory = useDirectoryStore();
 const reviewPerson = computed(() => {
   if (action.value.type !== 'review') return null;
