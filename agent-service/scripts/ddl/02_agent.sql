@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS agent.person_tags (
     source          TEXT NOT NULL DEFAULT 'self',  -- self / peer_review / admin
     created_by      TEXT NOT NULL DEFAULT '',
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    approval        TEXT NOT NULL DEFAULT 'approved',  -- 信任分级:peer_review 默认 pending,本人放行后 approved
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

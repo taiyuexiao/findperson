@@ -134,25 +134,41 @@ async def test_explicit_responsibility_via_mcp(pool) -> None:
     assert final.ranking.ranked_candidates[0]["has_formal"] is True
 
 
-# ---------------------------------------------------------------- Knowledge QA 全链路(§10.10)
+# ------------------------------------------------------ 知识类问题并入查人链(架构收敛:查/写双轨)
 
-async def test_knowledge_qa_full_chain(pool) -> None:
-    """knowledge_qa:经 MCP 检索 → 事实+引用;不编造。"""
-    orch = build_orchestrator()
-    state = _state("数据治理相关事务的时限要求是什么?", intent=Intent.KNOWLEDGE_QA)
+def _expert_finding_services():
+    """意图层 stub:固定判为 find_person/expert_finding,避免真实 LLM 分类波动导致用例不稳定。"""
+    from app.agent.intent import IntentService
+    from app.agent.orchestrator import ServiceRegistry
+    from app.core.llm_client import LLMResult
+
+    class StubIntentLLM:
+        async def structured_chat(self, messages, *, required_keys, **kw):
+            return {"intent": "find_person", "query_type": "expert_finding",
+                    "confidence": 0.95, "needs_clarification": False,
+                    "clarify_question": ""}, LLMResult(content="{}", tokens=1, model="stub")
+
+    return ServiceRegistry({"intent_service": IntentService(StubIntentLLM())})
+
+
+async def test_knowledge_question_as_expert_finding(pool) -> None:
+    """知识类问题 → find_person/expert_finding:双路检索、以名片作答、内容证据带来源引用。"""
+    orch = build_orchestrator(_expert_finding_services())
+    state = _state("智能问数的工作方法是什么?", QueryType.EXPERT_FINDING)
     final = await orch.run(state)
-    assert final.response.facts
-    assert "没有找到" not in final.response.facts[0] or final.response.citations
-    if final.response.citations:
-        c = final.response.citations[0]
-        assert c["document_id"] and c["version"] >= 1 and c["source_uri"]
+    assert final.retrieval.rag_documents  # RAG 路命中(与原 KnowledgeQANode 同一 MCP 检索)
+    assert final.ranking.ranked_candidates  # 以名片作答
+    assert final.response.citations  # 内容来源引用并入查人响应
+    node_names = {s.node_name for s in final.trace.spans}
+    assert "KnowledgeRetrievalNode" in node_names
+    assert "KnowledgeQANode" not in node_names  # 已摘除
 
 
-async def test_knowledge_qa_no_evidence_honest(pool) -> None:
-    """knowledge_qa 无证据:诚实空答(§10.10 红线)。"""
-    orch = build_orchestrator()
-    state = _state("火星殖民地葡萄栽培技术规范是什么?", intent=Intent.KNOWLEDGE_QA)
+async def test_knowledge_question_no_evidence_honest(pool) -> None:
+    """无相关证据:诚实空答,不编造(NO_RESULT 红线)。"""
+    orch = build_orchestrator(_expert_finding_services())
+    state = _state("火星殖民地葡萄栽培技术规范是什么?", QueryType.EXPERT_FINDING)
     final = await orch.run(state)
-    if not final.retrieval.rag_documents:
+    if not final.ranking.ranked_candidates:
         assert "没有找到" in final.response.facts[0]
         assert final.response.citations == []

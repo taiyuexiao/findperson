@@ -51,22 +51,28 @@ async def test_deterministic_short_circuit(pool) -> None:
     assert all(c.candidate_source in ("exact", "alias", "historical") for c in candidates)
 
 
-async def test_trgm_vector_not_auto_resolved(pool) -> None:
-    """链接器确认规则:trgm/vector 候选不自动 resolved(非法映射防线)。"""
+async def test_fuzzy_resolve_requires_char_overlap(pool) -> None:
+    """模糊归一防线:纯语义近邻不自动归一,兼有字符重叠才放行。
+
+    HarnessEval → AI基础研发 这类纯语义近邻(无字符重叠)必须拒绝;
+    首问必达 → 首问必答平台 这类错别字(有字符重叠)允许归一。
+    其余确定性级别(exact/alias/historical/prefix/subseq/contains)不受影响。
+    """
     linker = QueryConceptLinker()
-    state = await linker.link(["数据治理工作"], query="谁负责数据治理工作?")
-    # trgm/vector 命中的概念不得自动进 resolved_concepts
-    sources = {c["candidate_source"] for c in state.candidate_concepts}
-    if sources <= {"pg_trgm", "vector"}:
-        assert state.resolved_concepts == []
-    else:
-        # 若同时有确定性命中(不太可能),resolved 只能来自确定性级别
-        assert all(r["source"] in ("exact", "alias", "historical")
-                   for r in state.resolved_concepts)
+    # 纯语义近邻:不得归一
+    state = await linker.link(["HarnessEval"], query="谁负责HarnessEval?")
+    assert state.resolved_concepts == []
+    # 错别字:允许经受控模糊通道归一
+    state2 = await linker.link(["首问必达"], query="首问必达怎么用?")
+    fuzzy_ok = {"vector_fuzzy", "pg_trgm_fuzzy"}
+    deterministic = {"exact", "alias", "historical", "prefix", "subseq", "contains"}
+    assert all(r["source"] in (deterministic | fuzzy_ok) for r in state2.resolved_concepts)
+    if any(r["source"] in fuzzy_ok for r in state2.resolved_concepts):
+        assert any(r["canonical_name"] == "首问必答平台" for r in state2.resolved_concepts)
 
 
 async def test_max_level_3_compatible(pool) -> None:
-    """max_level=3 时行为与阶段 1 完全一致(向后兼容)。"""
+    """max_level=3 时不走 trgm/vector 模糊层(向后兼容);v2 确定性级别(prefix/contains/subseq)仍生效。"""
     recall = ConceptCandidateRecall()
     candidates = await recall.recall("数据治理工作", max_level=3)
-    assert candidates == []  # 前三级无命中即空,不走 trgm
+    assert all(c.candidate_source not in ("pg_trgm", "vector") for c in candidates)

@@ -1,4 +1,4 @@
-"""LLM Client(V1.2 §14.1)。
+﻿"""LLM Client(V1.2 §14.1)。
 
 职责:Hermes/OpenAI 兼容 API 调用、timeout、并发控制、model config、Mock、
 usage/Token 统计、error mapping。不维护任何业务 Prompt(业务 Prompt 归各 Node)。

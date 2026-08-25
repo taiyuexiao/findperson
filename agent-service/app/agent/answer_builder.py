@@ -23,8 +23,11 @@ IDENTITY_RELATED = "相关参与者"
 IDENTITY_EXPERT = "领域专家"
 IDENTITY_CANDIDATE = "能力候选人"
 
-# 事实部分最多呈现的候选人数(完整列表在 recommendation_cards 中另给 Top5)
+# 事实部分最多呈现的候选人数
 MAX_FACT_CANDIDATES = 5
+# 推荐卡片:宁缺毋滥——仅分数过线的达标者出卡,最多 3 张(1-2 个达标就 1-2 张)
+CARD_SCORE_FLOOR = 0.05
+MAX_CARDS = 3
 
 
 def _identity_of(candidate: dict) -> str:
@@ -69,6 +72,13 @@ class AnswerBuilder:
             self._build_contact_facts(state, ranked, names, response)
         else:
             self._build_person_facts(ranked, names, response)
+        # 架构收敛:知识类问题(已并入 expert_finding)命中的内容证据标注来源,
+        # 以名片为锚作答,详细内容见名片「相关发布内容」
+        if state.retrieval.rag_documents:
+            response.citations = [{
+                "document_id": h["document_id"], "chunk_id": h["chunk_id"],
+                "version": h["version"], "source_uri": h["source_uri"],
+            } for h in state.retrieval.rag_documents[:3]]
         self._build_suggestions(state, ranked, response)
         response.recommendation_cards = self._build_cards(ranked, names)
         response.final_answer = self._render(response, degraded=(decision == ConfidenceDecision.DEGRADED_ANSWER))
@@ -115,6 +125,8 @@ class AnswerBuilder:
         elif qt == QueryType.EXPERT_FINDING and ranked:
             top = ranked[0]["person_id"]
             response.suggestions.append("可以通过查看其发表的文章进一步了解其专业深度。")
+            if state.retrieval.rag_documents:
+                response.suggestions.append("相关已发布内容见名片「相关发布内容」,来源见引用。")
         elif qt == QueryType.EXPLICIT_RESPONSIBILITY:
             if not any(c.get("has_formal") for c in ranked):
                 response.suggestions.append(
@@ -131,7 +143,7 @@ class AnswerBuilder:
 
     def _build_cards(self, ranked, names) -> list[dict]:
         cards = []
-        for c in ranked[:5]:
+        for c in [c for c in ranked if c["score"] >= CARD_SCORE_FLOOR][:MAX_CARDS]:
             pid = c["person_id"]
             cards.append({
                 "person_id": pid,
@@ -162,7 +174,7 @@ class AnswerBuilder:
 
 
 class AnswerBuilderNode(AgentNode):
-    """回答生成节点。find_person 走完整组织;chat/unclear 走提前终态。"""
+    """回答生成节点。find_person 走完整组织;unclear/edit 走提前终态(架构收敛:chat/QA 不再单独成支)。"""
 
     name = "AnswerBuilderNode"
     timeout_ms = 8000
@@ -172,16 +184,11 @@ class AnswerBuilderNode(AgentNode):
         builder = services.get("answer_builder") if "answer_builder" in services.services else AnswerBuilder()
         update = StateUpdate()
 
-        if state.intent.intent == Intent.CHAT:
-            # chat:简单实现(§5.2),不进检索排序
-            update.response = ResponseState(
-                final_answer="您好!我是首问必答助手,可以帮您查找负责人、专家,或查询制度流程知识。")
-            update.terminate = True
-            return update
         if state.intent.intent == Intent.UNCLEAR or state.intent.needs_clarification:
+            # 架构收敛:不再闲聊,兜底统一为找人类引导
             update.response = ResponseState(
                 clarification=(state.intent.clarify_question
-                               or "我没有完全理解您的问题,能否换一种说法,例如『谁负责XX系统』?"))
+                               or "我可以帮你找负责人,试试『谁负责XX』『XX问题找谁』。"))
             update.response.final_answer = update.response.clarification
             update.terminate = True
             return update
@@ -201,33 +208,7 @@ class AnswerBuilderNode(AgentNode):
                 update.degraded = True
             update.terminate = True
             return update
-        if state.intent.intent == Intent.KNOWLEDGE_QA:
-            # §10.10:有证据 → 事实+引用;无证据 → 诚实空答,不编造
-            hits = state.retrieval.rag_documents
-            if hits:
-                update.response = ResponseState(
-                    facts=[h["content"] for h in hits[:3]],
-                    suggestions=["以上回答基于已发布的知识文档,来源见引用;如需最新信息请确认文档版本。"],
-                    citations=[{
-                        "document_id": h["document_id"], "chunk_id": h["chunk_id"],
-                        "version": h["version"], "source_uri": h["source_uri"],
-                    } for h in hits],
-                )
-                update.response.final_answer = (
-                    "【检索到的事实】\n" + "\n".join(update.response.facts)
-                    + "\n\n【建议】\n" + "\n".join(update.response.suggestions)
-                )
-            else:
-                update.response = ResponseState(
-                    facts=["没有找到与您问题相关的已发布知识。"],
-                    suggestions=["可以尝试换个说法,或补充制度/流程/系统的名称;",
-                                 "也可以改问『谁负责XX』类找人问题。"],
-                    final_answer="【检索到的事实】\n没有找到与您问题相关的已发布知识。\n\n【建议】\n可以尝试换个说法。",
-                )
-            if state.execution.degraded:
-                update.degraded = True
-            update.terminate = True
-            return update
-
+        # 架构收敛:KNOWLEDGE_QA 意图已废弃,意图层会映射为 find_person/expert_finding;
+        # 历史 trace 重放若带出该意图,直接落入下方查人组织逻辑
         update.response = await builder.build(state)
         return update

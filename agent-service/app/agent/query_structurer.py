@@ -131,6 +131,17 @@ class QueryStructurerService:
                     # 显式出现在原文的标记 explicit,否则 inferred(§6.1 验收)
                     state.field_sources[f"{field}:{v}"] = "explicit" if v in query else "inferred"
 
+        # ---- 3) 确定性保底:原文中的连续英文/数字技术词强制补入 ----
+        # LLM 抽取易截断多词英文术语(如 Agent Tracing 被截成 Agent),导致检索词失真;
+        # 这些词显式出现在原文,按 §6.1 标 explicit,与 LLM 抽取结果去重合并
+        for m in re.finditer(r"[A-Za-z][A-Za-z0-9]*(?:[ ._\-][A-Za-z0-9]+)*", query):
+            term = m.group(0).strip(" ._-")
+            if len(term) < 2:
+                continue
+            if term not in state.mentioned_systems:
+                state.mentioned_systems.append(term)
+                state.field_sources[f"systems:{term}"] = "explicit"
+
         # explicit_terms:所有显式出现的词项汇总(供 ConceptLinker 优先对齐)
         state.explicit_terms = [k.split(":", 1)[1] for k, s in state.field_sources.items()
                                 if s == "explicit" and not k.startswith(("people:", "departments:"))]

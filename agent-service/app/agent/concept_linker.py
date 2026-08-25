@@ -26,6 +26,12 @@ RESOLVE_THRESHOLD = 0.9
 # 前三级 + prefix/subseq 为确定性级别可自动 resolved;
 # prefix = 问句短词对长概念名的前缀/包含匹配;subseq = 字符子序列匹配(缺字说法,唯一命中才生效)
 AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical", "prefix", "subseq", "contains")
+# 模糊归一(错别字/口语说法):无确定性命中时,向量/trgm 头名 ≥FUZZY_AUTO_MIN 且与
+# 次名(不同概念)差距 ≥FUZZY_AUTO_GAP 才允许自动归一——§7.3 候选原则的受控放宽,
+# 门限保守防错配(实测:首问必达→首问必答平台 0.547/差距 0.11;asdfgh <0.5 不归一)
+FUZZY_AUTO_MIN = 0.5
+FUZZY_AUTO_GAP = 0.05
+FUZZY_AUTO_SOURCES = ("vector", "pg_trgm")
 
 
 # 第 2.5 级前缀/包含匹配的词项停用表:通用动作/职能词不做前缀匹配
@@ -33,6 +39,14 @@ AUTO_RESOLVE_SOURCES = ("exact", "alias", "historical", "prefix", "subseq", "con
 _PREFIX_STOP_TERMS = {
     "申请", "办理", "管理", "负责", "维护", "处理", "咨询", "值班", "运维",
     "受理", "负责人", "备岗", "故障", "申请受理", "资源负责人", "运维与故障", "备岗与咨询",
+}
+
+# 泛词停用表(B 类治理):词项本身是笼统词时,不做前缀/包含这类「猜测级」匹配——
+# 'ai infra' 里的 'ai' 会把 AI产品运营/AI基础研发/AI运营项目 整族猜出来(实测),
+# 泛词只允许 exact/alias/historical(精确级),猜测交给 trgm/向量候选
+_GENERIC_TERM_STOP = {
+    "ai", "bi", "it", "data", "数据", "管理", "平台", "系统", "信息",
+    "应用", "开发", "测试", "工作", "业务", "项目", "模型", "智能",
 }
 
 
@@ -83,13 +97,38 @@ class ConceptCandidateRecall:
                     canonical_name=concepts[cid].canonical_name,
                 ))
 
+        # 第三级:RawTag Historical Mapping(已审核的相同 RawTag 映射,直接复用)
+        # 提前于前缀/包含/子序列:有审核过的精确映射就不用启发式猜测——
+        # 否则 'ai infra' 会被前缀规则截胡到泛概念 'AI'(实测),精确映射反被短路
+        if not candidates:
+            tag = await self._registry.get_raw_tag_by_text(normalized)
+            if tag:
+                mappings = await self._registry.load_tag_mappings()
+                for m in mappings.get(tag.tag_id, []):
+                    if m.concept_id in concepts:
+                        candidates.append(ConceptCandidate(
+                            concept_id=m.concept_id, candidate_source="historical",
+                            # 保留 4 位小数:float4 的 0.9 实为 0.8999999761581421,
+                            # 不截尾会以 1e-8 之差跌破 RESOLVE_THRESHOLD=0.9 导致归一失败(实测)
+                            candidate_score=min(0.97, round(m.confidence, 4)), matched_text=text,
+                            canonical_name=concepts[m.concept_id].canonical_name,
+                        ))
+
         # 第 2.5 级:前缀/包含匹配(验收:短问句对长概念名,如 食堂→食堂评价、出入境→出入境管理)
         # 多概念歧义时不自动 resolved(由 resolve 侧 distinct>1 拦下),只出候选;
-        # 通用动作/职能词(申请/办理/运维…)不参与前缀匹配,防错拉职能类概念
-        if not candidates and normalized not in _PREFIX_STOP_TERMS:
+        # 通用动作/职能词(申请/办理/运维…)不参与前缀匹配,防错拉职能类概念;
+        # 泛名保护:<3 字符的短概念名(如 AI)不允许「长词包含短名」命中,防泛概念截胡多字词项
+        if not candidates and normalized not in _PREFIX_STOP_TERMS \
+                and normalized not in _GENERIC_TERM_STOP:
             for c in concepts.values():
                 name = c.canonical_name.lower()
-                if name.startswith(normalized) or (len(normalized) > len(name) and name in normalized):
+                if name.startswith(normalized):
+                    hit = True
+                elif len(normalized) > len(name) and len(name) >= 3 and name in normalized:
+                    hit = True
+                else:
+                    hit = False
+                if hit:
                     candidates.append(ConceptCandidate(
                         concept_id=c.concept_id, candidate_source="prefix",
                         candidate_score=0.96, matched_text=text,
@@ -110,7 +149,8 @@ class ConceptCandidateRecall:
         # 第 2.55 级:包含匹配(验收:词根/后缀型口语词,如 报销→财务报销管理)
         # 概念名包含查询词即可;词长≥2;唯一命中→0.95 进自动确认区;
         # 多命中→0.85 仅候选(不进自动确认,防 数据/管理 类泛词错拉);通用词与前缀同表停用
-        if not candidates and len(normalized) >= 2 and normalized not in _PREFIX_STOP_TERMS:
+        if not candidates and len(normalized) >= 2 and normalized not in _PREFIX_STOP_TERMS \
+                and normalized not in _GENERIC_TERM_STOP:
             hits = [c for c in concepts.values()
                     if len(c.canonical_name) > len(normalized)
                     and normalized in c.canonical_name.lower()]
@@ -143,19 +183,6 @@ class ConceptCandidateRecall:
                             concept_id=cid, candidate_source="subseq",
                             candidate_score=0.94, matched_text=text,
                             canonical_name=concepts[cid].canonical_name,
-                        ))
-
-        # 第三级:RawTag Historical Mapping(已审核的相同 RawTag 映射,直接复用)
-        if not candidates:
-            tag = await self._registry.get_raw_tag_by_text(normalized)
-            if tag:
-                mappings = await self._registry.load_tag_mappings()
-                for m in mappings.get(tag.tag_id, []):
-                    if m.concept_id in concepts:
-                        candidates.append(ConceptCandidate(
-                            concept_id=m.concept_id, candidate_source="historical",
-                            candidate_score=min(0.97, m.confidence), matched_text=text,
-                            canonical_name=concepts[m.concept_id].canonical_name,
                         ))
 
         if candidates or max_level < 4:
@@ -270,7 +297,57 @@ class QueryConceptLinker:
                         "confidence": c.candidate_score,
                     })
             elif len(distinct) > 1:
-                state.ambiguous = True
+                # 多概念歧义改为并列归一(至多 3 个):如 MLOps→MLOPS产品设计+MLOPS开发建设,
+                # 候选人是同领域兄弟姐妹时给并列名片,比纯追问更有用;真正无法理解的
+                # 输入由置信门/意图层澄清,不靠 ambiguous 一刀切
+                for c in top:
+                    if len({r["concept_id"] for r in state.resolved_concepts}) >= 3:
+                        break
+                    if c.concept_id not in {r["concept_id"] for r in state.resolved_concepts}:
+                        state.resolved_concepts.append({
+                            "concept_id": c.concept_id,
+                            "canonical_name": c.canonical_name,
+                            "matched_text": term,
+                            "source": c.candidate_source,
+                            "confidence": c.candidate_score,
+                        })
+            elif not distinct and len({c.concept_id for c in candidates
+                                       if c.candidate_source == "contains"}) > 1:
+                # contains 多命中(0.85 档)并列归一:泛词已被 _GENERIC_TERM_STOP 拦截,
+                # 剩余多命中多为同族领域(如「集群」命中三个集群类概念),
+                # 并列后让多证据持有者(标签+文章)自然浮顶(实测史朋飞案例)
+                for c in [c for c in candidates if c.candidate_source == "contains"][:3]:
+                    if c.concept_id not in {r["concept_id"] for r in state.resolved_concepts}:
+                        state.resolved_concepts.append({
+                            "concept_id": c.concept_id,
+                            "canonical_name": c.canonical_name,
+                            "matched_text": term,
+                            "source": c.candidate_source,
+                            "confidence": c.candidate_score,
+                        })
+            elif not distinct:
+                # 模糊归一:无确定性命中时,高置信模糊头名且差距足够才自动归一。
+                # 必须同时满足「语义近」(向量/trgm 分数)与「字符重叠」(pg_trgm 有候选):
+                # 纯语义近邻会把 HarnessEval 错配到 AI基础研发(实测),
+                # 而错别字(首问必达→首问必答平台)兼有字符重叠——双保险防错配
+                fuzzy = [c for c in candidates
+                         if c.candidate_source in FUZZY_AUTO_SOURCES
+                         and c.candidate_score >= FUZZY_AUTO_MIN]
+                if fuzzy:
+                    best = fuzzy[0]
+                    runner_up = next((c for c in fuzzy[1:] if c.concept_id != best.concept_id), None)
+                    char_overlap = any(c.concept_id == best.concept_id
+                                       and c.candidate_source == "pg_trgm" for c in candidates)
+                    if (char_overlap and (runner_up is None
+                            or best.candidate_score - runner_up.candidate_score >= FUZZY_AUTO_GAP)):
+                        if best.concept_id not in {r["concept_id"] for r in state.resolved_concepts}:
+                            state.resolved_concepts.append({
+                                "concept_id": best.concept_id,
+                                "canonical_name": best.canonical_name,
+                                "matched_text": term,
+                                "source": f"{best.candidate_source}_fuzzy",
+                                "confidence": best.candidate_score,
+                            })
         return state
 
 

@@ -76,8 +76,9 @@ async def test_node_degrades_to_rule_on_llm_failure() -> None:
     await close_pool()
 
 
-async def test_node_unclear_when_nothing_works() -> None:
-    """LLM 与规则都不覆盖 → 显式 unclear + 澄清问题,不猜测(§5.3)。"""
+async def test_node_defaults_to_find_person_when_nothing_works() -> None:
+    """架构收敛(查/写双轨):LLM 故障且规则无特定命中 → 默认低置信查人,
+    由检索与置信门自判 NO_RESULT(不再产出 unclear)。"""
     try:
         await init_pool()
     except Exception:
@@ -85,14 +86,15 @@ async def test_node_unclear_when_nothing_works() -> None:
     services = ServiceRegistry({"intent_service": IntentService(StubLLM(error=llm_error("down")))})
     node = IntentNode()
     update = await node.execute(_state("嗯那个事情怎么办呢"), services)
-    assert update.intent.intent == Intent.UNCLEAR
-    assert update.intent.needs_clarification is True
+    assert update.intent.intent == Intent.FIND_PERSON
+    assert update.intent.query_type is None
+    assert update.intent.confidence <= 0.5
     assert update.degraded is True
     await close_pool()
 
 
 async def test_rule_router_high_certainty_only() -> None:
-    """规则路由只覆盖高确定性:查电话/谁负责命中,复杂诊断不命中。"""
+    """规则路由:查电话/谁负责高确定性命中;无特定命中默认低置信查人(架构收敛)。"""
     try:
         await init_pool()
     except Exception:
@@ -104,5 +106,7 @@ async def test_rule_router_high_certainty_only() -> None:
     r2 = await router.route("谁负责Dify平台")
     assert r2 is not None and r2.query_type == QueryType.EXPLICIT_RESPONSIBILITY
     r3 = await router.route("Dify并发一高就超时,还伴随各种诡异的现象,该找谁")
-    assert r3 is None  # 复杂诊断不走规则(§5.3:不尝试复杂诊断)
+    # 架构收敛:规则无特定命中时默认低置信查人,由检索/置信门判 NO_RESULT(不再返回 None)
+    assert r3 is not None and r3.intent == Intent.FIND_PERSON
+    assert r3.query_type is None and r3.confidence <= 0.5
     await close_pool()

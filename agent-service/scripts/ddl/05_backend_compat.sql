@@ -110,9 +110,6 @@ CREATE TABLE IF NOT EXISTS public.query_logs (
 
 -- ========== 6. peer_reviews 对齐 backend(补 tag_name;保留 Agent 侧 content 列) ==========
 ALTER TABLE public.peer_reviews ADD COLUMN IF NOT EXISTS tag_name VARCHAR(64) NOT NULL DEFAULT '';
--- 信任分级:他人标签默认 pending,本人放行后 approved(与 agent.person_tags.approval 联动)
-ALTER TABLE public.peer_reviews ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';
-ALTER TABLE public.peer_reviews ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;  -- 信任分级放行时间戳(backend模型需要)
 
 CREATE INDEX IF NOT EXISTS idx_users_department ON public.users(department_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON public.sessions(user_id);

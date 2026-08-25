@@ -17,12 +17,17 @@ from app.contracts.trace import AgentTrace, NodeSpan
 # ---------------------------------------------------------------- 枚举
 
 class Intent(str, Enum):
-    """一级意图(V1.2 §5.2)。"""
+    """一级意图(V1.2 §5.2)。
+
+    架构收敛(查/写双轨)后:LLM 只产出 find_person / edit / unclear。
+    KNOWLEDGE_QA、CHAT 已废弃(知识问答并入查人链、闲聊不再响应),
+    枚举值保留仅为兼容历史 trace/日志/评测数据的反序列化。
+    """
 
     FIND_PERSON = "find_person"
-    KNOWLEDGE_QA = "knowledge_qa"
+    KNOWLEDGE_QA = "knowledge_qa"  # 废弃:知识问答并入 find_person(expert_finding)
     EDIT = "edit"
-    CHAT = "chat"
+    CHAT = "chat"                  # 废弃:闲聊不再单独响应,默认走查人链
     UNCLEAR = "unclear"
 
 

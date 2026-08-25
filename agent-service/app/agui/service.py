@@ -26,7 +26,8 @@ from app.core import db
 from app.core.observability import get_metrics, persist_trace
 
 RANK_LABELS = ["首推", "可协助", "相关人员"]
-MAX_CARDS = 5  # 与回答正文的命中人数上限对齐(正文提到的人要有对应名片)
+MAX_CARDS = 3  # 宁缺毋滥:最多 3 张名片
+CARD_SCORE_FLOOR = 0.05  # 达标线:仅分数过线者出卡(与 answer_builder 同规则)
 
 
 def _event(event_type: str, ids: dict, **data: Any) -> dict:
@@ -328,7 +329,8 @@ class AguiService:
         }
 
     async def _build_recommendation_cards(self, final: AgentState) -> list[dict]:
-        ranked = final.ranking.ranked_candidates[:MAX_CARDS]
+        ranked = [c for c in final.ranking.ranked_candidates
+                  if c["score"] >= CARD_SCORE_FLOOR][:MAX_CARDS]
         persons = await self._load_persons([c["person_id"] for c in ranked])
         related_map = await self._load_related_contents([c["person_id"] for c in ranked])
         cards = []
@@ -351,7 +353,10 @@ class AguiService:
         if not person_ids:
             return {}
         rows = await db.fetch(
-            "SELECT id, name, department, role, contact FROM public.people WHERE id = ANY($1)",
+            # 联系方式与前端名片库同规则:本人维护的 contact 优先,空则回落初始导入的 phone
+            "SELECT id, name, department, role,"
+            " COALESCE(NULLIF(contact, ''), NULLIF(phone, '')) AS contact"
+            " FROM public.people WHERE id = ANY($1)",
             person_ids)
         return {r["id"]: {"id": r["id"], "name": r["name"], "department": r["department"],
                           "role": r["role"], "contact": r["contact"]} for r in rows}

@@ -20,19 +20,18 @@ from app.core.llm_client import LLMPort, get_llm
 
 # ---------------------------------------------------------------- Prompt(业务 Prompt 归本模块,不进 LLM Client)
 
-INTENT_PROMPT = """你是首问必答平台的意图识别器。把用户问题分类为以下一级意图之一:
+INTENT_PROMPT = """你是首问必答平台的意图识别器。平台只做两件事:查(帮用户找到对的人)和写(维护资料/发布内容/画像)。把用户问题分类为以下一级意图之一:
 
-- find_person:找人(负责人、联系人、专家、谁懂某领域、谁喜欢/擅长某事(兴趣/技能找人)、故障找谁)
-- knowledge_qa:知识问答(制度、流程、操作方法、技术方案)
+- find_person:一切非写操作的问题(默认项)。包括:找人(负责人、联系人、专家、谁懂某领域、谁喜欢/擅长某事、故障找谁);知识/制度/流程/操作方法/技术方案类问题(平台以“找懂它的人”作答,同样归此类);寒暄、问候、与平台业务无关的对话
 - edit:写操作,包括修改本人资料(如『我现在负责X』『把我的电话改为X』『我的负责领域更新为X』)、发布内容、为他人写评价/画像
-- chat:闲聊、问候、与平台业务无关的对话
-- unclear:信息严重不足,无法理解意图
+- unclear:完全无法理解(乱码、无意义输入)
 
 若意图是 find_person,再判断查询类型:
 - contact_lookup:查某人的电话/联系方式/基本信息
 - explicit_responsibility:明确问"谁负责某系统/平台/领域"
 - diagnostic:描述故障/症状/异常现象,问该找谁
-- expert_finding:问"谁比较懂/谁是专家/谁做过"
+- expert_finding:问"谁比较懂/谁是专家/谁做过";知识/制度/流程/操作方法类问题也归入此类
+- 寒暄/无关对话:query_type 输出 null
 
 严格输出 JSON(不要输出任何其他内容):
 {{"intent": "...", "query_type": "...或null", "confidence": 0.0~1.0,
@@ -83,7 +82,13 @@ class RuleFallbackRouter:
         if re.search(r"部(的门|人员|谁|找人)", q):
             return IntentState(intent=Intent.FIND_PERSON,
                                query_type=QueryType.CONTACT_LOOKUP, confidence=0.85)
-        return None
+
+        # 4) 高确定性写操作 → edit(架构收敛:查/写双轨,写操作不进查人链)
+        if _looks_like_write(q):
+            return IntentState(intent=Intent.EDIT, confidence=0.8)
+
+        # 5) 默认:低置信进查人链,由检索与置信门自判 NO_RESULT(架构收敛:不再猜 unclear)
+        return IntentState(intent=Intent.FIND_PERSON, confidence=0.3)
 
 
 # 高确定性写操作模式(仅供 _looks_like_write 纠偏使用)
@@ -133,8 +138,16 @@ class IntentService:
         if intent in (Intent.CHAT, Intent.UNCLEAR) and _looks_like_write(query):
             intent = Intent.EDIT
 
+        # 架构收敛(查/写双轨):废弃意图防御性映射——知识问答并入查人(expert_finding),
+        # 闲聊默认查人。新 prompt 已不提供这两个选项,此处兼容旧缓存/旧 prompt 输出
+        if intent == Intent.KNOWLEDGE_QA:
+            intent = Intent.FIND_PERSON
+            data["query_type"] = data.get("query_type") or QueryType.EXPERT_FINDING.value
+        elif intent == Intent.CHAT:
+            intent = Intent.FIND_PERSON
+
         query_type = None
-        if intent == Intent.FIND_PERSON and data.get("query_type"):
+        if intent == Intent.FIND_PERSON and data.get("query_type"): 
             try:
                 query_type = QueryType(str(data["query_type"]))
             except ValueError as e:

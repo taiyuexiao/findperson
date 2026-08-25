@@ -87,6 +87,7 @@ class ConfidenceGateNode(AgentNode):
             state.ranking.ranked_candidates,
             concept_ambiguous=state.concept.ambiguous,
             degraded=state.execution.degraded,
+            resolved_concepts=state.concept.resolved_concepts,
         )
         update = StateUpdate()
         update.ranking = state.ranking.model_copy(deep=True)
