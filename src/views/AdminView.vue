@@ -56,6 +56,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { useRoute } from "vue-router";
 import { useAdminStore } from "../stores/admin.js";
 import { useAuthStore } from "../stores/auth.js";
 import { useContentStore } from "../stores/content.js";
@@ -69,9 +70,10 @@ import RankingList from "../components/admin/RankingList.vue";
 
 const admin = useAdminStore(); const content = useContentStore(); const directory = useDirectoryStore();
 const auth = useAuthStore();
+const route = useRoute();
 /** 反馈分析模块仅师沛琳(P0004)可见 */
 const canViewFeedback = computed(() => auth.userId === "P0004");
-const activeTab = ref("dashboard"); const showMemberDialog = ref(false); const showDepartmentDialog = ref(false); const memberForm = ref(null);
+const activeTab = ref(route.query.tab === "audit" ? "audit" : "dashboard"); const showMemberDialog = ref(false); const showDepartmentDialog = ref(false); const memberForm = ref(null);
 const departmentForm = reactive({ name: "", parentId: "", responsibility: "" });
 onMounted(() => { admin.loadAdminData(); directory.loadPeople(); }); watch(() => admin.activeWeek, () => admin.loadAdminData());
 function editMember(person) { memberForm.value = { ...person, isLeader: directory.isDepartmentLeader(person.id, person.department) }; showMemberDialog.value = true; }

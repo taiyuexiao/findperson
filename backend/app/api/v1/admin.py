@@ -54,7 +54,7 @@ def metrics(request: Request, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/rankings/recommend", summary="Recommend Ranking", description="本周推荐热度排行 TOP10（对齐前端 useAdminStore.ranking）")
+@router.get("/rankings/recommend", summary="Recommend Ranking", description="本周推荐热度排行 TOP5（对齐前端 useAdminStore.ranking）")
 def recommend_ranking(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
     # 本周推荐热度:Agent 推荐日志按候选人聚合(真实数据,替代无写入方的 weekly_recommend_count)
@@ -64,7 +64,7 @@ def recommend_ranking(request: Request, db: Session = Depends(get_db)):
         " FROM agent.agent_recommendation_logs l,"
         "      jsonb_array_elements(l.ranked_candidates) c"
         " WHERE l.created_at >= date_trunc('week', now())"
-        " GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
+        " GROUP BY 1 ORDER BY 2 DESC LIMIT 5"
     )).all()
     result = []
     for pid, value in rows:
