@@ -10,7 +10,7 @@
         </template>
       </ProfileSummary>
 
-      <section v-if="department" class="profile-block department-responsibility-block">
+      <section v-if="department && isLeader" class="profile-block department-responsibility-block">
         <div class="content-section-head"><div><h2>部门职责</h2><p class="person-meta">{{ canManageResponsibilities ? '负责部门及下级部门职责' : department.name }}</p></div></div>
         <div v-if="canManageResponsibilities" class="responsibility-manager">
           <div class="responsibility-filter-row">
@@ -32,21 +32,6 @@
         </div>
         <p v-else>{{ department.responsibility || '暂未维护部门职责。' }}</p>
       </section>
-
-      <div class="portrait-split-grid profile-portrait-split-grid">
-        <section v-if="reviews.pendingTags.length" class="profile-block pending-tags-block">
-          <div class="content-section-head">
-            <div><h2>待确认标签</h2><p class="person-meta">同事给你打的标签：放行后归入你的负责领域并获得同等检索权重；不放行的标签检索时降权。</p></div>
-          </div>
-          <article v-for="item in reviews.pendingTags" :key="item.id" class="pending-tag-item">
-            <span><strong>{{ item.reviewer }}</strong> 给你打了标签：<span class="tag">{{ item.tag }}</span><span class="person-meta">　{{ item.date }}</span></span>
-            <span class="pending-tag-actions">
-              <el-button class="primary-button small-button" type="primary" @click="approveTag(item.id)">放行</el-button>
-              <el-button class="secondary-button small-button" @click="ignoreTag(item.id)">忽略</el-button>
-            </span>
-          </article>
-        </section>
-      </div>
 
       <div class="portrait-split-grid profile-portrait-split-grid">
         <section class="profile-block self-portrait-block">
@@ -128,6 +113,11 @@ const supervisor = computed(() => directory.getPersonSupervisor(profile.value?.i
 const department = computed(() => directory.getDepartment(profile.value?.department));
 const managedRoots = computed(() => directory.managedDepartments(auth.userId));
 const canManageResponsibilities = computed(() => managedRoots.value.length > 0);
+/** 领导判定:管理的部门中有"xx部"(L2/L3部负责人),或本人属总经理室;L4组长与普通成员不显示部门职责栏目 */
+const isLeader = computed(() =>
+  managedRoots.value.some((d) => d.name.endsWith("部"))
+  || profile.value?.department === "总经理室"
+);
 const responsibilityFilter = ref("");
 const responsibilityDrafts = reactive({});
 const responsibilityOptions = computed(() => directory.manageableDepartments(auth.userId));
@@ -205,16 +195,6 @@ async function deleteContent(id) {
 
 function openReview() {
   router.push({ name: "review", query: { redirect: route.fullPath } });
-}
-
-async function approveTag(reviewId) {
-  await reviews.approveTag(reviewId);
-  ElMessage.success("已放行，标签已归入你的负责领域");
-}
-
-async function ignoreTag(reviewId) {
-  await reviews.ignoreTag(reviewId);
-  ElMessage.success("已忽略，该标签检索时将降权");
 }
 
 function openPublish() {

@@ -8,7 +8,7 @@
         <p class="person-meta">{{ departmentText }}</p>
         <p class="person-meta">{{ person.role }}</p>
         <p class="person-meta" v-if="supervisorText">上级：{{ supervisorText }}</p>
-        <p class="person-meta">联系方式：{{ person.contact || '-' }}</p>
+        <p class="person-meta">联系方式：{{ person.contact || person.phone || '-' }}</p>
       </div>
     </div>
     <div class="field-row" v-if="person.domains?.length">

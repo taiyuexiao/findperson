@@ -17,7 +17,7 @@
             <span class="notify-date">{{ item.date }}</span>
           </p>
           <div class="notify-actions">
-            <el-button size="small" type="primary" @click="approve(item.id)">放行</el-button>
+            <el-button size="small" type="primary" @click="approve(item.id)">接受</el-button>
             <el-button size="small" @click="ignore(item.id)">忽略</el-button>
           </div>
         </article>
@@ -55,7 +55,7 @@ const pendingCount = computed(() => reviews.pendingTags.length);
 
 async function approve(id) {
   await reviews.approveTag(id);
-  ElMessage.success("已放行，标签已归入你的负责领域");
+  ElMessage.success("已接受，标签已归入你的负责领域");
 }
 async function ignore(id) {
   await reviews.ignoreTag(id);

@@ -849,7 +849,13 @@ body.is-login-view .main-panel {
   background: #eef5ff;
   border: 1px solid #d8e7ff;
   border-radius: 20px;
-  padding: 16px 18px;
+  /* 紧凑化:原来 16px/18px 内边距叠加段落边距,单句问句气泡过高 */
+  padding: 8px 16px;
+}
+
+.user-bubble p {
+  margin: 0;
+  line-height: 1.6;
 }
 
 .assistant-bubble {
@@ -997,7 +1003,7 @@ body.is-login-view .main-panel {
 .portrait-tag-list {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start; /* 标签从左侧开始排列 */
   align-content: flex-start;
   column-gap: 12px;
   row-gap: 16px;
@@ -1548,11 +1554,7 @@ select:focus,
 
 .profile-portrait-split-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-}
-
-.profile-portrait-split-grid .profile-block {
-  align-self: start;
+  /* 不设置 align-items:网格项目默认 stretch,自画像/他画像两栏等高(以较高者为准),内容仍顶对齐 */
 }
 
 .peer-portrait-block {

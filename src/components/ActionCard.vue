@@ -43,7 +43,7 @@
           <p class="person-meta">{{ reviewDepartment }}</p>
           <p class="person-meta">{{ reviewPerson?.role }}</p>
           <p class="person-meta" v-if="reviewSupervisor">上级：{{ reviewSupervisor }}</p>
-          <p class="person-meta">联系方式：{{ reviewPerson?.contact || '-' }}</p>
+          <p class="person-meta">联系方式：{{ reviewPerson?.contact || reviewPerson?.phone || '-' }}</p>
         </div>
       </div>
       <div class="field-row" v-if="reviewPerson?.domains?.length">

@@ -24,6 +24,8 @@ import { getMockDepartments, getMockPeople, getMockRoles, saveMockDepartments, s
 import { isServerMode } from "../services/mode.js";
 
 const ALL_DEPARTMENTS = "";
+// 名片库按姓名拼音(首字母)排序;Intl.Collator 的 zh 排序规则即拼音序
+const pinyinCollator = new Intl.Collator("zh-Hans-CN");
 
 export const useDirectoryStore = defineStore("directory", {
   state: () => ({
@@ -77,7 +79,7 @@ export const useDirectoryStore = defineStore("directory", {
         ].join(" "));
         return (!keyword || haystack.includes(keyword))
           && (!selectedId || this.isDepartmentOrDescendant(person.department, selectedId));
-      });
+      }).sort((a, b) => pinyinCollator.compare(a.name || "", b.name || ""));
     },
   },
   actions: {

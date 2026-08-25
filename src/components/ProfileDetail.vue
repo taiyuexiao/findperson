@@ -20,14 +20,14 @@
           <button v-if="supervisor" class="supervisor-tag" type="button" @click="$emit('supervisor', supervisor.person.id)">上级：{{ supervisorText }}</button>
           <span v-else class="supervisor-tag">上级：{{ supervisorText }}</span>
         </div>
-        <p class="person-meta">联系方式：{{ person.phone || person.contact || "未填写" }}</p>
+        <p class="person-meta">联系方式：{{ person.contact || person.phone || "未填写" }}</p>
         <div class="field-row">
           <span v-for="tag in person.domains" :key="tag" class="tag">{{ tag }}</span>
         </div>
       </section>
 
-      <!-- 部门职责：领导展示其负责的部门（多部门搜索框长条 hover 展开），普通成员展示所属部门职责；负责人可编辑 -->
-      <section v-if="managedDepartments.length || department" class="profile-block department-responsibility-block">
+      <!-- 部门职责：仅领导(xx部负责人/总经理室成员)显示；L4组长与普通成员不显示。部长可编辑 -->
+      <section v-if="isLeader" class="profile-block department-responsibility-block">
         <div class="section-row">
           <h2>部门职责</h2>
           <button v-if="canEditResponsibility && !editingResponsibility" class="dept-edit-btn" type="button" @click="startEditResponsibility">编辑</button>
@@ -108,7 +108,8 @@
               <h3>{{ item.title }}</h3>
               <span v-if="item.pinned" class="pin-badge">置顶</span>
             </div>
-            <p>{{ item.summary }}</p>
+            <!-- 摘要为空时回落正文(种子文章无摘要,保证「标题+正文两行」对全部文章成立) -->
+            <p class="content-mini-summary">{{ item.summary || item.body }}</p>
             <div class="field-row">
               <span v-for="tag in item.tags" :key="tag" class="tag">{{ tag }}</span>
             </div>
@@ -173,6 +174,12 @@ const currentDepartment = computed(() => {
   if (props.managedDepartments.length === 1) return props.managedDepartments[0];
   return props.department;
 });
+
+/** 领导判定:管理的部门中有"xx部"(L2/L3部负责人),或本人属总经理室;L4组长与普通成员不算领导。 */
+const isLeader = computed(() =>
+  props.managedDepartments.some((d) => d.name.endsWith("部"))
+  || props.person.department === "总经理室"
+);
 
 /** 仅"科长"（单部门负责人）可编辑部门职责；多部门负责人(科长之上)与普通员工不在此显示编辑入口。 */
 const canEditResponsibility = computed(() =>
@@ -243,6 +250,16 @@ onBeforeUnmount(() => { resizeObserver?.disconnect(); });
 .dept-select-count { color: #a0a7b3; font-size: 13px; flex: 1; }
 .dept-select-arrow { color: #a0a7b3; flex-shrink: 0; transition: transform 0.2s; }
 .dept-select-bar:hover .dept-select-arrow { transform: rotate(180deg); }
+
+/* 发布内容摘要:默认两行,超出第二行末尾省略号 */
+.content-mini-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.6;
+  margin: 6px 0 0;
+}
 
 /* 选中部门卡片 */
 .dept-detail-card {

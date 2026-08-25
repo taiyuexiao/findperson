@@ -22,6 +22,12 @@
 
       <el-tab-pane label="内容审核" name="audit"><ContentAudit /></el-tab-pane>
 
+      <!-- 反馈分析仅对师沛琳(P0004)开放,其他管理员不显示该模块 -->
+      <el-tab-pane v-if="canViewFeedback" label="反馈分析" name="feedback">
+        <!-- v-if 保证每次切入该页签都重新挂载拉数,反馈数据实时刷新 -->
+        <FeedbackPanel v-if="activeTab === 'feedback'" />
+      </el-tab-pane>
+
       <el-tab-pane label="Agent可观测" name="observability">
         <!-- v-if 保证每次切入该页签都重新挂载拉数,观测数据实时反映最新链路 -->
         <AgentObservability v-if="activeTab === 'observability'" />
@@ -48,18 +54,23 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useAdminStore } from "../stores/admin.js";
+import { useAuthStore } from "../stores/auth.js";
 import { useContentStore } from "../stores/content.js";
 import { useDirectoryStore } from "../stores/directory.js";
 import ActivityTrend from "../components/admin/ActivityTrend.vue";
 import AgentObservability from "../components/admin/AgentObservability.vue";
 import ContentAudit from "../components/admin/ContentAudit.vue";
+import FeedbackPanel from "../components/admin/FeedbackPanel.vue";
 import MetricCard from "../components/admin/MetricCard.vue";
 import RankingList from "../components/admin/RankingList.vue";
 
 const admin = useAdminStore(); const content = useContentStore(); const directory = useDirectoryStore();
+const auth = useAuthStore();
+/** 反馈分析模块仅师沛琳(P0004)可见 */
+const canViewFeedback = computed(() => auth.userId === "P0004");
 const activeTab = ref("dashboard"); const showMemberDialog = ref(false); const showDepartmentDialog = ref(false); const memberForm = ref(null);
 const departmentForm = reactive({ name: "", parentId: "", responsibility: "" });
 onMounted(() => { admin.loadAdminData(); directory.loadPeople(); }); watch(() => admin.activeWeek, () => admin.loadAdminData());

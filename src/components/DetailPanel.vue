@@ -11,7 +11,7 @@
       <div class="detail-header">
         <h2>{{ personOf(detail.personId)?.name }}</h2>
         <p>{{ departmentText(personOf(detail.personId)) }} · {{ personOf(detail.personId)?.role }}</p>
-        <p>联系方式：{{ personOf(detail.personId)?.contact }}</p>
+        <p>联系方式：{{ personOf(detail.personId)?.contact || personOf(detail.personId)?.phone }}</p>
       </div>
       <div class="field-row">
         <span v-for="tag in personOf(detail.personId)?.domains" :key="tag" class="tag">{{ tag }}</span>
@@ -83,7 +83,7 @@
       <div class="detail-header">
         <h2>{{ reviewPerson?.name }}</h2>
         <p>{{ departmentText(reviewPerson) }} · {{ reviewPerson?.role }}</p>
-        <p>联系方式：{{ reviewPerson?.contact }}</p>
+        <p>联系方式：{{ reviewPerson?.contact || reviewPerson?.phone }}</p>
       </div>
       <div class="field-row">
         <span v-for="tag in reviewPerson?.domains" :key="tag" class="tag">{{ tag }}</span>
@@ -107,10 +107,11 @@
         <h3>评价内容</h3>
         <textarea class="detail-edit-input" rows="4" :value="detail.action?.nextReview?.text" @input="updateReviewField('text', $event.target.value)"></textarea>
       </div>
-      <div class="thread-card-actions">
+      <!-- 操作按钮上下排列,均独占一行蓝底白字 -->
+      <div class="thread-card-actions detail-action-stack">
         <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存评价</button>
-        <button class="secondary-button small-button" @click="$emit('profile', detail.action?.nextReview?.personId)">查看完整主页</button>
-        <button class="secondary-button small-button" @click="$emit('mine')">去评价页修改</button>
+        <button class="primary-button small-button" @click="$emit('profile', detail.action?.nextReview?.personId)">查看完整主页</button>
+        <button class="primary-button small-button" @click="$emit('mine')">去评价页修改</button>
       </div>
     </template>
 
@@ -134,7 +135,7 @@
       <div v-if="profileUser" class="detail-card">
         <h3>当前用户信息</h3>
         <p>{{ profileUser.name }} · {{ departmentText(profileUser) }} · {{ profileUser.role }}</p>
-        <p>联系方式：{{ profileUser.contact }}</p>
+        <p>联系方式：{{ profileUser.contact || profileUser.phone }}</p>
       </div>
       <div class="thread-card-actions">
         <button v-if="!detail.action?.confirmed && canConfirmProfile" class="primary-button small-button" @click="$emit('confirmProfile')">
@@ -238,6 +239,12 @@ function updateReviewField(key, text) {
 </script>
 
 <style scoped>
+/* 侧栏操作按钮:竖排堆叠,每个独占一行 */
+.detail-action-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 /* 侧边栏直接修改输入框(与全局卡片风格一致的轻量样式) */
 .detail-edit-field {
   display: block;
