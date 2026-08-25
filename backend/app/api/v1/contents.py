@@ -122,6 +122,11 @@ def create_content(
         emit_publish_event(db, CONTENT_PUBLISHED, content.id, created_by=user.id)
     db.add(content)
     db.commit()
+    if eng_status == "published":
+        # 文章自打标签回流为声明类证据(tag_sync,尽力而为不阻断)
+        from ...services.tag_sync import sync_article_tags
+        sync_article_tags(db, person_id=user.id)
+        db.commit()
     db.refresh(content)
     return _content_to_response(content)
 
@@ -190,6 +195,10 @@ def update_content(
         # 发布变更事件(rag.publish_events,供增量重建索引消费)
         emit_publish_event(db, CONTENT_CHANGED, content.id, created_by=user.id)
     db.commit()
+    # 文章标签回流(标签编辑/转待审核撤下均按最新已发布并集重算)
+    from ...services.tag_sync import sync_article_tags
+    sync_article_tags(db, person_id=content.owner_id)
+    db.commit()
     db.refresh(content)
     return _content_to_response(content)
 
@@ -205,6 +214,10 @@ def delete_content(content_id: str, request: Request, db: Session = Depends(get_
     if content.status == "published":
         emit_publish_event(db, CONTENT_DELETED, content.id, created_by=user.id)
     content.is_deleted = True
+    db.commit()
+    # 删除后重算作者已发布标签并集(该文标签若无其他已发布文章覆盖则停用)
+    from ...services.tag_sync import sync_article_tags
+    sync_article_tags(db, person_id=content.owner_id)
     db.commit()
     return {"message": "已删除"}
 
@@ -255,6 +268,10 @@ def audit_content(
         content.version += 1
         emit_publish_event(db, CONTENT_PUBLISHED, content.id, created_by=user.id)
 
+    db.commit()
+    # 审核通过/驳回后重算作者已发布标签并集
+    from ...services.tag_sync import sync_article_tags
+    sync_article_tags(db, person_id=content.owner_id)
     db.commit()
     db.refresh(content)
     return _content_to_response(content)

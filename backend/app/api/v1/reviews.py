@@ -13,7 +13,17 @@ from ...models.user import User
 from ...schemas.reviews import ReviewCreateRequest, ReviewResponse, PersonTagSummary
 from ...schemas.sessions import PaginatedResponse
 from ...services.publish_event import emit_publish_event, PERSON_CHANGED
+import re
+
 from ...services.tag_sync import sync_person_domain_tags, sync_tag_to_agent
+
+
+def _split_tags(tag: str) -> list[str]:
+    """顿号/逗号/分号/斜杠分隔的多标签拆分(『大数据底层开发、知识工程』→ 两个独立标签)。
+
+    不按空格拆:英文标签可能含合法空格(如 AI 基础研发)。
+    """
+    return [t.strip() for t in re.split(r"[、，,；;/]+", tag or "") if t.strip()]
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -49,39 +59,42 @@ def create_review(body: ReviewCreateRequest, request: Request, db: Session = Dep
     user = get_current_user(request, db)
     if body.personId == user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能为自己打标签")
-    existing = db.query(PeerReview).filter(
-        PeerReview.person_id == body.personId,
-        PeerReview.reviewer_id == user.id,
-        PeerReview.tag_name == body.tag,
-    ).first()
-    if existing:
-        # v4 §五:相同评价人/对象/事项的重复提交按更新处理,不产生重复记录
-        # 信任分级:曾被忽略的标签再次被打 → 重新进入待放行(再次通知本人)
-        existing.created_at = datetime.now(timezone.utc)
-        if existing.status == "ignored":
-            existing.status = "pending"
-            existing.resolved_at = None
-        _sync_review_to_agent_tags(db, person_id=body.personId, tag=body.tag, active=True,
-                                   approval="pending" if existing.status == "pending" else "approved")
-        emit_publish_event(db, PERSON_CHANGED, body.personId, created_by=user.id)
-        db.commit()
-        db.refresh(existing)
-        return _review_to_response(existing)
-    review = PeerReview(
-        id=uuid.uuid4().hex[:12],
-        person_id=body.personId,
-        reviewer_id=user.id,
-        tag_name=body.tag,
-        status="pending",  # 信任分级:他人标签需被评价人放行后才获全权重
-    )
-    db.add(review)
-    _sync_review_to_agent_tags(db, person_id=body.personId, tag=body.tag, active=True,
-                               approval="pending")
+    tags = _split_tags(body.tag) or [body.tag]
+    # 多标签:逐标签独立成记录(各自进入被评价人的待放行通知/信任分级流),返回首条
+    first: PeerReview | None = None
+    for tag in tags:
+        existing = db.query(PeerReview).filter(
+            PeerReview.person_id == body.personId,
+            PeerReview.reviewer_id == user.id,
+            PeerReview.tag_name == tag,
+        ).first()
+        if existing:
+            # v4 §五:相同评价人/对象/事项的重复提交按更新处理,不产生重复记录
+            # 信任分级:曾被忽略的标签再次被打 → 重新进入待放行(再次通知本人)
+            existing.created_at = datetime.now(timezone.utc)
+            if existing.status == "ignored":
+                existing.status = "pending"
+                existing.resolved_at = None
+            _sync_review_to_agent_tags(db, person_id=body.personId, tag=tag, active=True,
+                                       approval="pending" if existing.status == "pending" else "approved")
+            first = first or existing
+            continue
+        review = PeerReview(
+            id=uuid.uuid4().hex[:12],
+            person_id=body.personId,
+            reviewer_id=user.id,
+            tag_name=tag,
+            status="pending",  # 信任分级:他人标签需被评价人放行后才获全权重
+        )
+        db.add(review)
+        _sync_review_to_agent_tags(db, person_id=body.personId, tag=tag, active=True,
+                                   approval="pending")
+        first = first or review
     # 发事件:agent-service 消费后重建该人员的 OKF/RAG 索引(画像进知识检索)
     emit_publish_event(db, PERSON_CHANGED, body.personId, created_by=user.id)
     db.commit()
-    db.refresh(review)
-    return _review_to_response(review)
+    db.refresh(first)
+    return _review_to_response(first)
 
 
 @router.get("/pending", summary="Pending Reviews", description="我收到的待放行标签(信任分级通知)")

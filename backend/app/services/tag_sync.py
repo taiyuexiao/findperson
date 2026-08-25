@@ -130,6 +130,42 @@ def sync_tag_to_agent(db: Session, *, person_id: str, tag: str, active: bool,
                        person_id, tag, exc_info=True)
 
 
+def sync_article_tags(db: Session, *, person_id: str) -> None:
+    """文章自打标签回流(声明类证据,与自填负责领域同权,§信任分级本人声明)。
+
+    取作者全部「已发布」文章的标签并集 → person_tags(source='self_article') 全量同步:
+    - 文章发布/过审:标签激活进检索体系;
+    - 文章撤下(转待审核/驳回/删除)或标签被编辑:不再被任何已发布文章覆盖的标签自动停用;
+    - PCE 视图 ELSE 分支 = self_declared_scope/explicit_self_tag,与 source='self' 同权重(0.8);
+    - 不写入 users.domains,不影响名片「负责领域」展示,只参与检索证据。
+
+    与 Agent 体系同步为"尽力而为",失败仅记告警,不阻断业务写入。
+    """
+    try:
+        with db.begin_nested():
+            rows = db.execute(text(
+                "SELECT DISTINCT jsonb_array_elements_text(c.tags) AS tag"
+                " FROM public.contents c"
+                " WHERE c.owner_id=:p AND c.status='published' AND c.is_deleted=FALSE"),
+                {"p": person_id}).all()
+            desired = {_normalize(r[0]) for r in rows if r[0] and r[0].strip()}
+            existing = db.execute(
+                text("SELECT pt.person_tag_id, rt.normalized_text FROM agent.person_tags pt"
+                     " JOIN agent.raw_tags rt ON rt.tag_id = pt.tag_id"
+                     " WHERE pt.person_id=:p AND pt.source='self_article' AND pt.is_active"),
+                {"p": person_id}).all()
+            for person_tag_id, normalized in existing:
+                if normalized not in desired:
+                    db.execute(text("UPDATE agent.person_tags SET is_active=FALSE"
+                                    " WHERE person_tag_id=:i"), {"i": person_tag_id})
+            for (tag,) in rows:
+                if tag and tag.strip():
+                    sync_tag_to_agent(db, person_id=person_id, tag=tag.strip(), active=True,
+                                      source="self_article", created_by="content-api")
+    except Exception:  # noqa: BLE001
+        logger.warning("文章标签回流 Agent 体系失败(已忽略): person=%s", person_id, exc_info=True)
+
+
 def sync_person_domain_tags(db: Session, *, person_id: str, domains: list[str]) -> None:
     """负责领域全量同步(source='self'):新集合外的自建标签停用,新标签建档并尝试概念映射。
 

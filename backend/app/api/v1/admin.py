@@ -36,41 +36,47 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 @router.get("/metrics", summary="Metrics", description="管理看板核心指标（对齐前端 useAdminStore.metrics）")
 def metrics(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
+    from sqlalchemy import text as sa_text
     people_count = db.query(sa_func.count(User.id)).scalar() or 0
     content_count = db.query(sa_func.count(Content.id)).filter(Content.is_deleted == False).scalar() or 0
     dept_count = db.query(sa_func.count(User.department_id.distinct())).scalar() or 0
-    now = datetime.now(timezone.utc)
-    week_rec = db.query(sa_func.coalesce(sa_func.sum(Content.weekly_recommend_count), 0)).filter(
-        Content.is_deleted == False
-    ).scalar() or 0
+    # 本周推荐量:Agent 推荐日志真实计数(content.weekly_recommend_count 无写入方,已弃用)
+    week_rec = db.execute(sa_text(
+        "SELECT COALESCE(sum(jsonb_array_length(ranked_candidates)),0)"
+        " FROM agent.agent_recommendation_logs"
+        " WHERE created_at >= date_trunc('week', now())"
+    )).scalar() or 0
     return {
         "peopleCount": people_count,
         "contentCount": content_count,
         "domainCount": dept_count,
-        "weeklyRecommendationTotal": week_rec,
+        "weeklyRecommendationTotal": int(week_rec),
     }
 
 
 @router.get("/rankings/recommend", summary="Recommend Ranking", description="本周推荐热度排行 TOP10（对齐前端 useAdminStore.ranking）")
 def recommend_ranking(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
-    top = db.query(
-        Content.owner_id,
-        sa_func.sum(Content.weekly_recommend_count).label("value")
-    ).filter(Content.is_deleted == False).group_by(Content.owner_id).order_by(
-        sa_func.sum(Content.weekly_recommend_count).desc()
-    ).limit(10).all()
+    # 本周推荐热度:Agent 推荐日志按候选人聚合(真实数据,替代无写入方的 weekly_recommend_count)
+    from sqlalchemy import text as sa_text
+    rows = db.execute(sa_text(
+        "SELECT c->>'person_id' AS pid, count(*) AS value"
+        " FROM agent.agent_recommendation_logs l,"
+        "      jsonb_array_elements(l.ranked_candidates) c"
+        " WHERE l.created_at >= date_trunc('week', now())"
+        " GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
+    )).all()
     result = []
-    for owner_id, value in top:
-        person = db.query(User).filter(User.id == owner_id).first()
+    for pid, value in rows:
+        person = db.query(User).filter(User.id == pid).first()
         result.append({
             "person": {
-                "id": owner_id,
+                "id": pid,
                 "name": person.name if person else "",
                 "department": person.department.name if person and person.department else "",
                 "role": person.role or "" if person else "",
             },
-            "value": value or 0,
+            "value": int(value),
         })
     return result
 
@@ -86,13 +92,15 @@ def activity_trend(
     if week == "previous":
         now -= timedelta(days=7)
     week_start = now - timedelta(days=now.weekday())
+    # 周日活:Agent 运行轨迹真实计数(public query_logs 无写入方,已弃用)
+    from sqlalchemy import text as sa_text
     trend = []
     for i in range(7):
         day_start = week_start + timedelta(days=i)
         day_end = day_start + timedelta(days=1)
-        count = db.query(sa_func.count(QueryLog.id)).filter(
-            QueryLog.created_at >= day_start, QueryLog.created_at < day_end
-        ).scalar() or 0
+        count = db.execute(sa_text(
+            "SELECT count(*) FROM agent.agent_traces WHERE created_at >= :s AND created_at < :e",
+        ), {"s": day_start, "e": day_end}).scalar() or 0
         trend.append({"day": day_start.strftime("%m-%d"), "value": count, "percent": 0})
     max_val = max(t["value"] for t in trend) if trend else 1
     for t in trend:
@@ -125,9 +133,20 @@ def get_statistic_value(metric_key: str, request: Request, db: Session = Depends
 
 # ---------------------------------------------------------------- 推荐反馈可视化(验收:反馈数据进库 + 后台展示)
 
+# 反馈分析模块仅对师沛琳开放(前端页签同款限制,此处做服务端强制)
+FEEDBACK_ADMIN_ID = "P0004"
+
+
+def _require_feedback_admin(request: Request, db: Session) -> None:
+    from fastapi import HTTPException
+    user = get_current_user(request, db)
+    if user.id != FEEDBACK_ADMIN_ID:
+        raise HTTPException(status_code=403, detail="反馈分析模块仅指定管理员可见")
+
+
 @router.get("/feedback/summary", summary="Feedback Summary", description="推荐反馈汇总(有帮助率/趋势/点踩原因分布)")
 def feedback_summary(request: Request, db: Session = Depends(get_db)):
-    require_admin(request)
+    _require_feedback_admin(request, db)
     from sqlalchemy import text as sa_text
     totals = db.execute(sa_text(
         "SELECT feedback_type, count(*) AS n FROM agent.feedback_events"
@@ -171,7 +190,7 @@ def feedback_recent(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    require_admin(request)
+    _require_feedback_admin(request, db)
     from sqlalchemy import text as sa_text
     rows = db.execute(sa_text(
         "SELECT e.id, e.created_at, e.user_id, u.name AS user_name,"
