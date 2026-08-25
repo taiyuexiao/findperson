@@ -5,6 +5,7 @@ from app.agent.candidate_merger import CandidateMerger
 from app.agent.orchestrator import AgentNode, ServiceRegistry
 from app.agent.people_ranker import ConfidenceGate, PeopleRanker
 from app.contracts.agent_state import AgentState, Intent, StateUpdate
+from app.contracts.evidence import EvidenceType
 
 
 class CandidateMergerNode(AgentNode):
@@ -69,6 +70,72 @@ class PeopleRankerNode(AgentNode):
         update.ranking.ranked_candidates = ranked
         update.ranking.rank_policy = policy
         update.ranking.confidence = top1
+        return update
+
+
+class RelatedPeopleFallbackNode(AgentNode):
+    """双路召回无可用结果时，由 LLM 从真实人员库选择 1～3 位可能相关人员。"""
+
+    name = "RelatedPeopleFallbackNode"
+    timeout_ms = 35000
+    on_error = "degrade"
+
+    async def execute(self, state: AgentState, services: ServiceRegistry) -> StateUpdate:
+        if state.intent.intent != Intent.FIND_PERSON:
+            return StateUpdate()
+        ranked = state.ranking.ranked_candidates
+        if ranked and ranked[0].get("score", 0.0) >= 0.05:
+            return StateUpdate()  # 主召回优先，绝不让 LLM 覆盖高匹配结果
+
+        from app.agent.related_people_fallback import RelatedPeopleFallback
+
+        recommender = (services.get("related_people_fallback")
+                       if "related_people_fallback" in services.services
+                       else RelatedPeopleFallback())
+        recommendations = await recommender.recommend(
+            state.request.normalized_query or state.request.original_query)
+        if not recommendations:
+            return StateUpdate()
+
+        fallback_ranked = []
+        for item in recommendations[:3]:
+            person = item["person"]
+            relevance = float(item.get("relevance") or 0.0)
+            # 相关兜底分数只用于保持模型给出的顺序并让卡片展示，永远低于精确证据。
+            score = round(0.05 + min(1.0, max(0.0, relevance)) * 0.4, 4)
+            fallback_ranked.append({
+                "person_id": str(person["id"]),
+                "score": score,
+                "feedback_adjust": 0.0,
+                "has_formal": False,
+                "evidence_count": 1,
+                "evidences": [{
+                    "person_id": str(person["id"]),
+                    "concept_id": None,
+                    "relation_type": "llm_related_fallback",
+                    "evidence_type": EvidenceType.INFERRED_FROM_PROFILE.value,
+                    "source_type": "public.people",
+                    "source_id": str(person["id"]),
+                    "confidence": relevance,
+                    "verification_status": "active",
+                    "freshness": None,
+                    "relation_path": [],
+                    "detail": {
+                        "match_level": "related_fallback",
+                        "reason": item.get("reason") or "具备相近岗位或领域经验",
+                        "selection_source": item.get("selection_source", "llm_related_fallback"),
+                        "no_exact_match": True,
+                    },
+                }],
+                "responsibilities": [],
+                "is_related_fallback": True,
+            })
+
+        update = StateUpdate()
+        update.ranking = state.ranking.model_copy(deep=True)
+        update.ranking.ranked_candidates = fallback_ranked
+        update.ranking.rank_policy = "llm_related_fallback_policy"
+        update.ranking.confidence = fallback_ranked[0]["score"]
         return update
 
 

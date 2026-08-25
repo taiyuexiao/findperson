@@ -419,7 +419,10 @@ def _build_reasons(candidate: dict) -> list[str]:
         if etype == "explicit_self_tag" and detail.get("source_raw_tag"):
             reasons.append(f"负责领域命中:{detail['source_raw_tag']}")
         elif etype == "inferred_from_profile":
-            reasons.append("自画像与问题相关")
+            if detail.get("no_exact_match"):
+                reasons.append(f"可能相关:{detail.get('reason') or '具备相近岗位或领域经验'}")
+            else:
+                reasons.append("自画像与问题相关")
         elif etype == "inferred_from_article":
             hint = detail.get("title_hint") or detail.get("document_id") or ""
             reasons.append(f"发布过相关内容:{hint}" if hint else "发布过相关内容")

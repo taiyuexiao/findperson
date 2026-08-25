@@ -70,10 +70,20 @@ class QueryStructurerService:
 
         # 概念显式匹配:canonical_name 与 alias 命中即放入 mentioned_systems(大小写不敏感)
         query_lower = query.lower()
-        concept_rows = await db.fetch(
-            "SELECT canonical_name FROM agent.concepts WHERE status IN ('seed','active')"
-        )
-        alias_rows = await db.fetch("SELECT alias FROM agent.concept_aliases")
+        # 兼容统一库旧字段(concepts.name)及尚未建立 concept_aliases 的情况；
+        # 此处失败不能丢掉后面的问句规则与英文技术词保底。
+        try:
+            concept_rows = await db.fetch(
+                "SELECT canonical_name FROM agent.concepts WHERE status IN ('seed','active')"
+            )
+        except Exception:  # noqa: BLE001
+            concept_rows = await db.fetch(
+                "SELECT name AS canonical_name FROM agent.concepts WHERE status='active'"
+            )
+        try:
+            alias_rows = await db.fetch("SELECT alias FROM agent.concept_aliases")
+        except Exception:  # noqa: BLE001
+            alias_rows = []
         concept_names = {r["canonical_name"] for r in concept_rows}
         aliases = {r["alias"] for r in alias_rows}
         for name in sorted(concept_names, key=len, reverse=True):

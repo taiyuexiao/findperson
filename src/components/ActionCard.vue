@@ -52,7 +52,7 @@
       <p class="person-meta person-portrait" v-if="reviewPerson?.selfPortrait">{{ reviewPerson.selfPortrait }}</p>
       <p class="review-new-tag">本次评价：{{ action.nextReview.text || action.nextReview.tag }}（{{ action.nextReview.date }}）</p>
     </div>
-    <div class="thread-card-actions" @click.stop>
+    <div class="thread-card-actions review-card-actions" @click.stop>
       <button v-if="isConfirmed" class="primary-button small-button" @click="$emit('profile', action.nextReview.personId)">
         查看评价对象
       </button>
@@ -142,5 +142,9 @@ const reviewSupervisor = computed(() => {
   font-size: 13px;
   font-weight: 700;
   color: var(--muted, #667085);
+}
+
+.review-card-actions {
+  margin-top: 10px;
 }
 </style>

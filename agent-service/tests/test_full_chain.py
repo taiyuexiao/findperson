@@ -110,13 +110,15 @@ async def test_answer_facts_suggestions_split(pool) -> None:
     assert "【检索到的事实】" in final.response.final_answer
 
 
-async def test_answer_no_result_no_fabrication(pool) -> None:
-    """空结果不编造(§18):随便一个无映射领域。"""
+async def test_answer_no_exact_result_returns_related_real_people(pool) -> None:
+    """无完全匹配时，从真实人员库返回 1～3 位可能相关人员，不编造 ID。"""
     state = _state("谁负责量子计算酿酒平台?", QueryType.EXPLICIT_RESPONSIBILITY)
     orch = build_orchestrator()
     final = await orch.run(state)
-    assert final.response.facts[0].startswith("没有找到")
-    assert "王丹" not in final.response.final_answer  # 不编造人员
+    assert 1 <= len(final.ranking.ranked_candidates) <= 3
+    assert all(c.get("is_related_fallback") for c in final.ranking.ranked_candidates)
+    assert "未找到与问题完全匹配" in final.response.final_answer
+    assert "可能相关的老师" in final.response.final_answer
 
 
 def test_identity_label_rules() -> None:

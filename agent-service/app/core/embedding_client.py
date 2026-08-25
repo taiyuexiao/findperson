@@ -184,11 +184,16 @@ class OpenAICompatibleEmbedding:
 class FastembedEmbedding:
     """fastembed 真实 Embedding 实现(ONNX Runtime,无需 PyTorch)。"""
 
-    def __init__(self, model_name: str, dimension: int) -> None:
+    def __init__(self, model_name: str, dimension: int, *, model_path: str = "") -> None:
+        import os
+
         from fastembed import TextEmbedding
         self._model_name = model_name
         self._dimension = dimension
-        self._emb = TextEmbedding(model_name=model_name)
+        kwargs = {}
+        if model_path and os.path.isdir(model_path):
+            kwargs = {"specific_model_path": model_path, "local_files_only": True}
+        self._emb = TextEmbedding(model_name=model_name, **kwargs)
 
     @property
     def dimension(self) -> int:
@@ -217,7 +222,10 @@ def get_rag_embedding() -> EmbeddingPort:
             base_url=s.embedding_base_url, api_key=s.embedding_api_key,
         )
     if provider == "fastembed":
-        return FastembedEmbedding(s.rag_embedding_model, s.rag_embedding_dim)
+        return FastembedEmbedding(
+            s.rag_embedding_model, s.rag_embedding_dim,
+            model_path=s.embedding_model_path,
+        )
     return MockEmbedding(s.rag_embedding_dim, s.rag_embedding_model)
 
 
@@ -226,4 +234,7 @@ def get_concept_embedding() -> EmbeddingPort:
     s = get_settings()
     if s.embedding_use_mock:
         return MockEmbedding(s.concept_embedding_dim, s.concept_embedding_model)
-    return FastembedEmbedding(s.concept_embedding_model, s.concept_embedding_dim)
+    return FastembedEmbedding(
+        s.concept_embedding_model, s.concept_embedding_dim,
+        model_path=s.embedding_model_path,
+    )

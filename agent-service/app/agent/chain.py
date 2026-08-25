@@ -7,6 +7,7 @@ AgentOrchestrator
   → StructuredRetrievalNode (仅 find_person;diagnostic/expert_finding 并联 KnowledgeRetrievalNode)
   → CandidateMergerNode
   → PeopleRankerNode
+  → RelatedPeopleFallbackNode (主召回无结果时才执行有效逻辑)
   → ConfidenceGateNode
   → AnswerBuilderNode
 
@@ -45,7 +46,7 @@ from app.agent.concept_linker import ConceptLinkerNode
 from app.agent.intent import IntentNode
 from app.agent.nodes.knowledge_retrieval import KnowledgeRetrievalNode
 from app.agent.nodes.ranking import (
-    CandidateMergerNode, ConfidenceGateNode, PeopleRankerNode,
+    CandidateMergerNode, ConfidenceGateNode, PeopleRankerNode, RelatedPeopleFallbackNode,
 )
 from app.agent.nodes.structured_retrieval import StructuredRetrievalNode
 from app.agent.orchestrator import AgentOrchestrator, ServiceRegistry
@@ -71,8 +72,8 @@ def build_orchestrator(services: ServiceRegistry | None = None) -> AgentOrchestr
     orch.add(ConceptLinkerNode(), condition=find_person)
     if ALWAYS_DUAL:
         # 统一双路:所有查人问题「结构化 ∥ RAG」并联召回(防「只发文章没打标签」漏人)
-        # 无信号熔断:理解层什么有效词都没提出(寒暄/乱码)时不进检索,
-        # 直接交置信门 NO_RESULT,防 RAG 噪声底给垃圾输入配出名片
+        # 无信号熔断:理解层什么有效词都没提出(寒暄/乱码)时不进检索或相关人员兜底,
+        # 防止给非找人问题随意配出名片。
         orch.add_parallel([StructuredRetrievalNode(), KnowledgeRetrievalNode()],
                           label="RetrievalCoordinator",
                           condition=lambda s: find_person(s) and _has_retrieval_signal(s))
@@ -83,6 +84,8 @@ def build_orchestrator(services: ServiceRegistry | None = None) -> AgentOrchestr
         orch.add(StructuredRetrievalNode(), condition=lambda s: find_person(s) and not dual_path(s))
     orch.add(CandidateMergerNode(), condition=find_person)
     orch.add(PeopleRankerNode(), condition=find_person)
+    orch.add(RelatedPeopleFallbackNode(),
+             condition=lambda s: find_person(s) and _has_retrieval_signal(s))
     orch.add(ConfidenceGateNode(), condition=find_person)
     orch.add(AnswerBuilderNode())
     return orch

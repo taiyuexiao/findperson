@@ -174,6 +174,11 @@ class ConfidenceGate:
             return ConfidenceDecision.CLARIFY
         if top1["score"] < min_score and not top1["has_formal"]:
             return ConfidenceDecision.NO_RESULT
+        # 兜底候选已经由大模型按相关性筛选并限制为 1～3 人。
+        # 它们本来就是“无完全匹配时的可能相关人选”，不应再因分数接近
+        # 被普通候选的歧义规则打回澄清或无结果。
+        if top1.get("is_related_fallback"):
+            return ConfidenceDecision.ANSWER
         # Top1/Top2 差距过小且双方均无正式证据 → 澄清;
         # 但双方命中同一 Concept(同领域并列人选)不属于需要用户澄清的歧义,应并列返回;
         # 仅在 Top1 本身够强(≥0.3)时才谈「歧义澄清」——全是弱行为证据时,

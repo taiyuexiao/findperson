@@ -81,7 +81,14 @@ class AnswerBuilder:
             } for h in state.retrieval.rag_documents[:3]]
         self._build_suggestions(state, ranked, response)
         response.recommendation_cards = self._build_cards(ranked, names)
-        response.final_answer = self._render(response, degraded=(decision == ConfidenceDecision.DEGRADED_ANSWER))
+        related_fallback = any(c.get("is_related_fallback") for c in ranked)
+        if related_fallback:
+            response.final_answer = response.facts[0]
+            return response
+        response.final_answer = self._render(
+            response,
+            degraded=(decision == ConfidenceDecision.DEGRADED_ANSWER),
+        )
         return response
 
     # ---------------- 事实组织 ----------------
@@ -97,6 +104,10 @@ class AnswerBuilder:
                     )
 
     def _build_person_facts(self, ranked, names, response) -> None:
+        related_fallback = any(c.get("is_related_fallback") for c in ranked)
+        if related_fallback:
+            response.facts.append("未找到与问题完全匹配的正式责任人或专家，以下是可能相关的老师。")
+            return
         for c in ranked[:MAX_FACT_CANDIDATES]:  # 事实只呈现 Top N,避免刷屏
             pid = c["person_id"]
             identity = _identity_of(c)
@@ -116,6 +127,8 @@ class AnswerBuilder:
 
     def _build_suggestions(self, state, ranked, response) -> None:
         decision = state.ranking.gate_decision
+        if any(c.get("is_related_fallback") for c in ranked):
+            return
         if decision == ConfidenceDecision.DEGRADED_ANSWER:
             response.suggestions.append(
                 "本次结果部分来自降级路径(如知识服务不可用时的业务直读),建议稍后复核。")

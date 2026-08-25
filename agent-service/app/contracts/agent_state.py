@@ -257,6 +257,10 @@ NODE_FIELD_MATRIX: dict[str, dict[str, list[str]]] = {
         "reads": ["ranking.merged_candidates", "intent.query_type"],
         "writes": ["ranking.ranked_candidates", "ranking.rank_policy", "ranking.confidence"],
     },
+    "RelatedPeopleFallbackNode": {
+        "reads": ["ranking.ranked_candidates", "ranking.confidence", "request.normalized_query"],
+        "writes": ["ranking.ranked_candidates", "ranking.rank_policy", "ranking.confidence"],
+    },
     "ConfidenceGateNode": {
         "reads": ["ranking", "concept"],
         "writes": ["ranking.gate_decision"],

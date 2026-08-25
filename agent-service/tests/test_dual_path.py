@@ -165,10 +165,11 @@ async def test_knowledge_question_as_expert_finding(pool) -> None:
 
 
 async def test_knowledge_question_no_evidence_honest(pool) -> None:
-    """无相关证据:诚实空答,不编造(NO_RESULT 红线)。"""
+    """无完全匹配证据:最多推荐 3 位真实相关人员，并明确非完全匹配。"""
     orch = build_orchestrator(_expert_finding_services())
     state = _state("火星殖民地葡萄栽培技术规范是什么?", QueryType.EXPERT_FINDING)
     final = await orch.run(state)
-    if not final.ranking.ranked_candidates:
-        assert "没有找到" in final.response.facts[0]
-        assert final.response.citations == []
+    assert 1 <= len(final.ranking.ranked_candidates) <= 3
+    assert all(c.get("is_related_fallback") for c in final.ranking.ranked_candidates)
+    assert "未找到与问题完全匹配" in final.response.final_answer
+    assert final.response.citations == []
