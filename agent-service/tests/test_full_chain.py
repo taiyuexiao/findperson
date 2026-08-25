@@ -107,7 +107,7 @@ async def test_answer_facts_suggestions_split(pool) -> None:
     orch = build_orchestrator()
     final = await orch.run(state)
     assert final.response.facts
-    assert "【检索到的事实】" in final.response.final_answer
+    assert "为你推荐以下负责人" in final.response.final_answer
 
 
 async def test_answer_no_exact_result_returns_related_real_people(pool) -> None:

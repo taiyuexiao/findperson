@@ -85,9 +85,12 @@ class AnswerBuilder:
         if related_fallback:
             response.final_answer = response.facts[0]
             return response
+        fact_heading = ("【检索到的事实】" if qt == QueryType.CONTACT_LOOKUP
+                        else "为你推荐以下负责人")
         response.final_answer = self._render(
             response,
             degraded=(decision == ConfidenceDecision.DEGRADED_ANSWER),
+            fact_heading=fact_heading,
         )
         return response
 
@@ -175,10 +178,11 @@ class AnswerBuilder:
             "SELECT id, name FROM public.people WHERE id = ANY($1)", person_ids)
         return {r["id"]: r["name"] for r in rows}
 
-    def _render(self, response: ResponseState, *, degraded: bool = False) -> str:
+    def _render(self, response: ResponseState, *, degraded: bool = False,
+                fact_heading: str = "【检索到的事实】") -> str:
         parts = []
         if response.facts:
-            parts.append("【检索到的事实】\n" + "\n".join(response.facts))
+            parts.append(fact_heading + "\n" + "\n".join(response.facts))
         if response.suggestions:
             parts.append("【建议】\n" + "\n".join(response.suggestions))
         if degraded:
