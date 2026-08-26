@@ -73,39 +73,36 @@
       </div>
     </template>
 
-    <!-- ── 他人画像草稿(人员结构与查人侧栏一致 + 草稿可编辑) ── -->
+    <!-- ── 他人画像草稿(上:画像事项表单,与个人中心-为他人画像同模块;下:画像对象信息) ── -->
     <template v-else-if="detail.type === 'reviewAction'">
       <div class="detail-panel-top">
         <div class="detail-panel-label">为 {{ reviewPerson?.name || '同事' }} 画像</div>
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
-      <!-- 人员信息(与查人时右侧栏结构一致) -->
-      <div class="detail-header">
+      <!-- 上:画像事项表单(同事/日期/事项,与个人中心-为他人画像同结构) -->
+      <div class="detail-card">
+        <label class="detail-edit-field">
+          <span>同事</span>
+          <input class="detail-edit-input" :value="reviewPerson?.name || '待确认人员'" disabled />
+        </label>
+        <label class="detail-edit-field">
+          <span>日期</span>
+          <input class="detail-edit-input" :value="detail.action?.nextReview?.date" disabled />
+        </label>
+        <label class="detail-edit-field">
+          <span>负责领域</span>
+          <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" placeholder="请输入负责领域(顿号分隔)" />
+        </label>
+      </div>
+      <!-- 下:画像对象信息(紧凑展示) -->
+      <div class="detail-card">
+        <div class="detail-panel-label">画像对象</div>
         <h2>{{ reviewPerson?.name }}</h2>
         <p>{{ departmentText(reviewPerson) }} · {{ reviewPerson?.role }}</p>
         <p>联系方式：{{ reviewPerson?.contact || reviewPerson?.phone }}</p>
-      </div>
-      <div class="field-row">
-        <span v-for="tag in reviewPerson?.domains" :key="tag" class="tag">{{ tag }}</span>
-      </div>
-      <div class="detail-card">
-        <p>{{ reviewPerson?.selfPortrait }}</p>
-      </div>
-      <div class="detail-section">
-        <h3>相关发布内容</h3>
-        <div v-if="reviewPersonRelated.length" class="related-list">
-          <button v-for="item in reviewPersonRelated" :key="item.id" type="button" @click="$emit('content', item.id)">
-            {{ item.title }}
-          </button>
+        <div class="field-row" v-if="reviewPerson?.domains?.length">
+          <span v-for="tag in reviewPerson.domains" :key="tag" class="tag">{{ tag }}</span>
         </div>
-        <div v-else class="empty-state compact">暂无相关发布内容。</div>
-      </div>
-      <!-- 本次画像草稿(可直接修改) -->
-      <div class="detail-card">
-        <h3>能力标签</h3>
-        <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" />
-        <h3>画像内容</h3>
-        <textarea class="detail-edit-input" rows="4" :value="detail.action?.nextReview?.text" @input="updateReviewField('text', $event.target.value)"></textarea>
       </div>
       <!-- 操作按钮上下排列,均独占一行蓝底白字 -->
       <div class="thread-card-actions detail-action-stack">
@@ -198,11 +195,6 @@ const profileUser = computed(() => personOf(props.currentUserId));
 const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
 // 他人画像:被画像人详情(结构对齐查人侧栏)
 const reviewPerson = computed(() => personOf(props.detail?.action?.nextReview?.personId));
-const reviewPersonRelated = computed(() => {
-  const pid = props.detail?.action?.nextReview?.personId;
-  if (!pid) return [];
-  return props.content.filter((item) => item.ownerId === pid).slice(0, 4);
-});
 
 // ── 侧边栏直接修改(改动写回卡片 action,确认时生效) ──
 const PROFILE_FIELD_LABELS = {
