@@ -1,7 +1,7 @@
 <template>
   <div class="activity-panel trend-panel">
     <div class="activity-summary">
-      <strong>{{ total }} 次访问</strong>
+      <strong>{{ total }} {{ unit }}</strong>
       <span class="soft-count">近 7 天</span>
     </div>
     <div class="activity-chart">
@@ -18,5 +18,6 @@
 defineProps({
   items: { type: Array, required: true },
   total: { type: Number, required: true },
+  unit: { type: String, default: "次访问" },
 });
 </script>

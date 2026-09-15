@@ -23,6 +23,9 @@ from app.core.embedding_client import EmbeddingPort, get_rag_embedding
 RRF_K = 60
 TOP_N_EACH = 20
 TOP_K_FINAL = 5
+# 向量腿噪声下限(实测:bge-small-zh 噪声底 asdfgh/你好≈0.51,真实词命中≥0.57)
+# 低于下限的向量命中纯粹是「最近邻总存在」的假象,丢弃防垃圾输入配出名片
+RAG_VECTOR_MIN_SIM = 0.55
 
 
 def permission_clause(user_context: UserContext, start_index: int) -> tuple[str, list]:
@@ -76,8 +79,34 @@ class HybridRetriever:
 
         # ---- 路 1:FTS Top20 ----
         # 中文场景 pg_trgm 的 % 阈值(默认 0.3)会误杀短词命中(CJK 短串 trigram 少),
-        # 因此采用 ILIKE 子串命中(中文查询词多为内容子串)+ 低阈值 trgm 双通道,
-        # similarity 仅用于排序(§10.9 FTS/pg_trgm)。
+        # 因此采用 ILIKE 子串命中 + 低阈值 trgm 双通道,similarity 仅用于排序(§10.9)。
+        # 多词检索式(链路把理解词项拼成空格分隔短句)按词 OR 匹配:
+        # 整串 ILIKE 对拼接式必败(没有文档包含整串),逐词子串命中才符合
+        #「任一词项相关即召回」的语义;单词查询保持原整串 ILIKE 行为。
+        terms = [t for t in query.split() if len(t) >= 2]
+        fts_params: list = [query, version, max_sensitivity, *perm_params]
+        next_idx = limit_idx
+        # 标题参与匹配:标题短、信号集中,trgm 在长 chunk 上被稀释时(尤其错别字/变体)
+        # 标题 ILIKE 仍能命中;标题命中权重 ×2 排在内容命中之前
+        title_expr = "COALESCE(c.metadata->>'title','')"
+        if len(terms) > 1:
+            content_conds, title_conds = [], []
+            for t in terms:
+                content_conds.append(f"c.content ILIKE '%' || ${next_idx} || '%'")
+                title_conds.append(f"{title_expr} ILIKE '%' || ${next_idx} || '%'")
+                fts_params.append(t)
+                next_idx += 1
+            match_sql = ("(" + " OR ".join(content_conds + title_conds)
+                         + " OR similarity(c.content, $1) > 0.15"
+                         + f" OR similarity({title_expr}, $1) > 0.15)")
+            title_sum = " + ".join(f"({c})::int" for c in title_conds)
+            content_sum = " + ".join(f"({c})::int" for c in content_conds)
+            order_sql = f"(({title_sum}) * 2 + ({content_sum})) DESC, sim DESC"
+        else:
+            match_sql = (f"(c.content ILIKE '%' || $1 || '%' OR {title_expr} ILIKE '%' || $1 || '%'"
+                         f" OR similarity(c.content, $1) > 0.15 OR similarity({title_expr}, $1) > 0.15)")
+            order_sql = (f"({title_expr} ILIKE '%' || $1 || '%')::int * 2"
+                         " + (c.content ILIKE '%' || $1 || '%')::int DESC, sim DESC")
         fts_rows = await db.fetch(
             "SELECT c.chunk_id, c.document_id, c.content, c.section_path, c.metadata,"
             "       similarity(c.content, $1) AS sim"
@@ -87,9 +116,9 @@ class HybridRetriever:
             f" WHERE c.index_version = $2 AND d.status = 'active'"
             "   AND d.sensitivity <= $3"
             f"   AND {perm_sql}"
-            "   AND (c.content ILIKE '%' || $1 || '%' OR similarity(c.content, $1) > 0.15)"
-            f" ORDER BY (c.content ILIKE '%' || $1 || '%')::int DESC, sim DESC LIMIT ${limit_idx}",
-            query, version, max_sensitivity, *perm_params, TOP_N_EACH,
+            f"   AND {match_sql}"
+            f" ORDER BY {order_sql} LIMIT ${next_idx}",
+            *fts_params, TOP_N_EACH,
         )
 
         # ---- 路 2:pgvector Top20(1536 维 RAG 向量空间) ----
@@ -106,6 +135,7 @@ class HybridRetriever:
                 f" WHERE c.index_version = $2 AND d.status = 'active'"
                 "   AND d.sensitivity <= $3"
                 f"   AND {perm_sql}"
+                f"   AND (1 - (c.embedding <=> $1::vector)) >= {RAG_VECTOR_MIN_SIM}"
                 f" ORDER BY c.embedding <=> $1::vector LIMIT ${limit_idx}",
                 vec, version, max_sensitivity, *perm_params, TOP_N_EACH,
             )
@@ -173,7 +203,10 @@ class HybridRetriever:
                                    "metadata": row["metadata"], "rrf_score": 0.0}
                 scores[cid]["rrf_score"] += weight / (RRF_K + rank)
 
-        _add(fts_rows, 1.0)
+        # FTS 腿权重 2.0:关键词精确命中(如标题含 HarnessEval)必须压过
+        # 纯向量近邻( embedding 空间漂移产生的语义邻居),否则文章类强命中
+        # 会被人员画像的向量近邻挤掉(实测 HarnessEval case)
+        _add(fts_rows, 2.0)
         _add(vec_rows, 1.0)
         return sorted(scores.values(), key=lambda r: r["rrf_score"], reverse=True)
 

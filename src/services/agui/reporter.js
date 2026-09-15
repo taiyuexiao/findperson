@@ -9,6 +9,8 @@ export function buildInteractionEvent(payload = {}) {
     targetType: payload.targetType || "",
     targetId: payload.targetId || "",
     value: payload.value || "",
+    reason: payload.reason || "",
+    traceId: payload.traceId || "",
     context: payload.context || {},
     timestamp: new Date().toISOString(),
   };

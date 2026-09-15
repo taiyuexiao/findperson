@@ -89,15 +89,33 @@ class FeedbackRepository:
         )
 
     async def person_vote_summary(self) -> dict[str, dict[str, int]]:
-        """按人员聚合反馈:{person_id: {"up": n, "down": n}}(排序回流入参)。"""
+        """按人员聚合反馈:{person_id: {"up": n, "down": n}}(排序回流入参)。
+
+        两类事件都计入:
+        - target_type='person':直接对人员的反馈(target_id 即人员);
+        - target_type='answer':回答级反馈(前端「有帮助/没帮助」的实际形态),
+          按 trace 关联该轮推荐日志,归到该轮全部候选人名下——
+          没有这层归属时排序回流永远拿不到票(反馈优化「未上线」的根因)。
+        """
         rows = await db.fetch(
-            "SELECT target_id, feedback_type, count(*) AS n"
-            " FROM agent.feedback_events"
-            " WHERE target_type='person' AND feedback_type IN ('like','dislike')"
-            " GROUP BY target_id, feedback_type",
+            "WITH votes AS ("
+            "  SELECT target_id AS pid, feedback_type FROM agent.feedback_events"
+            "  WHERE target_type='person' AND feedback_type IN ('like','dislike')"
+            "  UNION ALL"
+            "  SELECT c->>'person_id', e.feedback_type"
+            "  FROM agent.feedback_events e"
+            "  JOIN (SELECT DISTINCT ON (trace_id) trace_id, message_id, ranked_candidates"
+            "        FROM agent.agent_recommendation_logs ORDER BY trace_id, id DESC) l"
+            "    ON l.trace_id = e.trace_id AND e.trace_id <> ''"
+            "   AND (e.message_id = '' OR l.message_id = e.message_id)"
+            "  CROSS JOIN LATERAL jsonb_array_elements(l.ranked_candidates) c"
+            "  WHERE e.target_type='answer' AND e.feedback_type IN ('like','dislike')"
+            ")"
+            " SELECT pid, feedback_type, count(*) AS n FROM votes"
+            " GROUP BY pid, feedback_type",
         )
         summary: dict[str, dict[str, int]] = {}
         for r in rows:
-            slot = summary.setdefault(r["target_id"], {"up": 0, "down": 0})
+            slot = summary.setdefault(r["pid"], {"up": 0, "down": 0})
             slot["up" if r["feedback_type"] == "like" else "down"] = int(r["n"])
         return summary

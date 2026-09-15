@@ -19,13 +19,15 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.agent.chain import build_orchestrator
+from app.agent.memory import load_history
 from app.contracts.agent_state import AgentState, RequestState, UserContext
 from app.contracts.trace import new_trace_id
 from app.core import db
 from app.core.observability import get_metrics, persist_trace
 
 RANK_LABELS = ["首推", "可协助", "相关人员"]
-MAX_CARDS = 3  # v4 §四:找人类问题返回至多三位候选人
+MAX_CARDS = 3  # 宁缺毋滥:最多 3 张名片
+CARD_SCORE_FLOOR = 0.05  # 达标线:仅分数过线者出卡(与 answer_builder 同规则)
 
 
 def _event(event_type: str, ids: dict, **data: Any) -> dict:
@@ -81,6 +83,15 @@ class AguiService:
             session_id, title[:28], summary[:200],
         )
 
+    async def _ensure_session(self, session_id: str, user_id: str) -> None:
+        """前端本地生成的会话 id 首次落库(幂等),保证 get_state/_patch_session 生效。"""
+        await db.execute(
+            "INSERT INTO agent.agent_sessions(session_id, user_id, state)"
+            " VALUES($1,$2,$3) ON CONFLICT (session_id) DO NOTHING",
+            session_id, user_id,
+            json.dumps({"title": "新对话", "summary": "", "turnCount": 0}, ensure_ascii=False),
+        )
+
     async def _save_message(self, *, session_id: str, message_id: str, run_id: str,
                             trace_id: str, user_id: str, role: str, text: str,
                             analysis: dict | None = None, cards: list | None = None) -> None:
@@ -103,18 +114,44 @@ class AguiService:
         user_context: UserContext,
         user_message_id: str = "",
         client_trace_id: str = "",
+        assistant_message_id: str = "",
     ) -> AsyncIterator[dict]:
         """执行一轮问答,按序产出 AG-UI 事件。"""
+        trace_id = new_trace_id()
         ids = {
             "sessionId": session_id,
             "runId": uuid.uuid4().hex,
-            "messageId": f"msg-a-{uuid.uuid4().hex[:12]}",
+            # 优先使用前端本地生成的助手消息 ID,保证前端事件归属匹配(§3.3)
+            "messageId": assistant_message_id or f"msg-a-{uuid.uuid4().hex[:12]}",
+            # 反馈入库需 traceId 关联推荐日志(agent_recommendation_logs)
+            "traceId": trace_id,
         }
-        trace_id = new_trace_id()
+        # 会话管理:确保会话行存在(前端自建 id 首次发消息时);再加载多轮记忆
+        try:
+            await self._ensure_session(session_id, user_context.user_id)
+        except Exception:  # noqa: BLE001 —— 会话落库失败不阻断回答
+            pass
+        history = await load_history(session_id)
+        # 结构化短期记忆注入(运行产物组装,零额外 LLM):意图/结构化 prompt 读到精确槽位状态
+        from app.agent.memory import append_memory_round, load_memory_lines
+        memory_lines = await load_memory_lines(session_id)
+        if memory_lines:
+            history = ([{"role": "memory", "text": line} for line in memory_lines] + history)
+        # 多轮续接通道(零 LLM):有待确认写操作卡 + 续接特征 → 直接合并草稿出卡
+        from app.agent.action_drafts import is_continuation
+        pending_card = await self._last_pending_card(session_id)
+        if pending_card and is_continuation(text, pending_card):
+            async for event in self._run_continuation(
+                    session_id=session_id, text=text, ids=ids, trace_id=trace_id,
+                    user_context=user_context, user_message_id=user_message_id,
+                    pending_card=pending_card):
+                yield event
+            return
         state = AgentState(request=RequestState(
             trace_id=trace_id, run_id=ids["runId"], session_id=session_id,
             user_context=user_context, original_query=text,
             normalized_query=" ".join(text.split()),
+            history=history,
         ))
         state.trace.trace_id = trace_id
         state.trace.run_id = ids["runId"]
@@ -171,6 +208,15 @@ class AguiService:
             await self._log_recommendation(final, ids=ids, trace_id=trace_id,
                                            user_id=user_context.user_id, query=text)
             await self._patch_session(session_id, title=text, summary=summary)
+            # 结构化短期记忆:本轮产物组装 round 摘要(意图/动作/槽位/状态),零额外 LLM
+            card = final.response.confirmation_card
+            await append_memory_round(session_id, {
+                "q": text[:30],
+                "intent": final.intent.intent.value if final.intent.intent else "",
+                "action": (card.get("action") or {}).get("type", "") if card else "",
+                "slots": self._slots_summary(card),
+                "status": "待确认卡片" if card else "已回答",
+            })
         except Exception:  # noqa: BLE001
             pass
 
@@ -179,6 +225,95 @@ class AguiService:
         })
         yield _event("run_finished", ids, degraded=final.execution.degraded,
                      latencyMs=int((time.perf_counter() - started) * 1000))
+
+    # ---------------- 多轮续接通道 ----------------
+
+    @staticmethod
+    def _slots_summary(card: dict | None) -> str:
+        """从确认卡提取槽位摘要(结构化记忆用)。"""
+        action = (card or {}).get("action") or {}
+        patch = action.get("nextProfilePatch")
+        if patch:
+            return ",".join(f"{k}={v}" for k, v in patch.items() if not k.startswith("_"))[:80]
+        review = action.get("nextReview")
+        if review:
+            return f"{review.get('personName', '')}:{review.get('tag', '')}"[:80]
+        content = action.get("nextContent")
+        if content:
+            return f"title={content.get('title', '')}"[:80]
+        return ""
+
+    @staticmethod
+    async def _last_pending_card(session_id: str) -> dict | None:
+        """最近一条助手消息里尚未被 confirm 事件消费的确认卡;无则 None。"""
+        try:
+            row = await db.fetchrow(
+                "SELECT cards FROM agent.agui_messages"
+                " WHERE session_id=$1 AND role='assistant' AND cards IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1", session_id)
+            if not row:
+                return None
+            cards = row["cards"]
+            if isinstance(cards, str):
+                cards = json.loads(cards)
+            for card in (cards or []):
+                if card.get("kind") != "confirmation":
+                    continue
+                if card.get("status") not in (None, "active"):
+                    continue
+                confirmed = await db.fetchval(
+                    "SELECT 1 FROM agent.feedback_events"
+                    " WHERE target_id=$1 AND value LIKE 'confirm_%' LIMIT 1",
+                    card.get("id"))
+                if not confirmed:
+                    return card
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    async def _run_continuation(self, *, session_id: str, text: str, ids: dict,
+                                trace_id: str, user_context: UserContext,
+                                user_message_id: str, pending_card: dict):
+        """续接通道:合并上一张草稿出新确认卡,零 LLM,毫秒级。"""
+        from app.agent.action_drafts import build_continuation_card
+        from app.agent.memory import append_memory_round
+
+        card = build_continuation_card(pending_card, text, run_id=ids["runId"])
+        action_type = card["action"]["type"]
+        analysis = {"intent": "edit", "actionType": action_type,
+                    "summary": card["analysis"]["summary"], "continuation": True}
+        reply = "已在上一张草稿卡片的基础上合并你的补充，确认后生效。"
+        try:
+            await self._save_message(
+                session_id=session_id,
+                message_id=user_message_id or f"msg-u-{uuid.uuid4().hex[:12]}",
+                run_id=ids["runId"], trace_id=trace_id,
+                user_id=user_context.user_id, role="user", text=text)
+        except Exception:  # noqa: BLE001
+            pass
+        yield _event("run_started", ids, result={"analysis": analysis})
+        for i in range(0, len(reply), 24):
+            yield _event("text_delta", ids, delta=reply[i : i + 24])
+        yield _event("text_finished", ids)
+        yield _event("confirmation_card", ids, card=card)
+        try:
+            await self._save_message(session_id=session_id, message_id=ids["messageId"],
+                                     run_id=ids["runId"], trace_id=trace_id,
+                                     user_id=user_context.user_id, role="assistant",
+                                     text=reply, analysis=analysis, cards=[card])
+            await self._patch_session(session_id, title=text,
+                                      summary=f"{text[:24]} edit")
+            await append_memory_round(session_id, {
+                "q": text[:30], "intent": "edit", "action": action_type,
+                "slots": self._slots_summary(card), "status": "待确认卡片(续接合并)",
+            })
+        except Exception:  # noqa: BLE001
+            pass
+        yield _event("state_delta", ids, patch={
+            "title": text[:28], "turnCountIncrement": 1,
+            "summary": f"{text[:24]} edit",
+        })
+        yield _event("run_finished", ids, degraded=False, latencyMs=0)
 
     # ---------------- 事件内容构建 ----------------
 
@@ -194,8 +329,10 @@ class AguiService:
         }
 
     async def _build_recommendation_cards(self, final: AgentState) -> list[dict]:
-        ranked = final.ranking.ranked_candidates[:MAX_CARDS]
+        ranked = [c for c in final.ranking.ranked_candidates
+                  if c["score"] >= CARD_SCORE_FLOOR][:MAX_CARDS]
         persons = await self._load_persons([c["person_id"] for c in ranked])
+        related_map = await self._load_related_contents([c["person_id"] for c in ranked])
         cards = []
         for index, c in enumerate(ranked):
             pid = c["person_id"]
@@ -207,7 +344,7 @@ class AguiService:
                 "person": persons.get(pid, {"id": pid, "name": pid}),
                 "personId": pid,
                 "reasons": _build_reasons(c),
-                "related": [],
+                "related": related_map.get(pid, []),
             })
         return cards
 
@@ -216,10 +353,31 @@ class AguiService:
         if not person_ids:
             return {}
         rows = await db.fetch(
-            "SELECT id, name, department, role, contact FROM public.people WHERE id = ANY($1)",
+            # 联系方式与前端名片库同规则:本人维护的 contact 优先,空则回落初始导入的 phone
+            "SELECT id, name, department, role,"
+            " COALESCE(NULLIF(contact, ''), NULLIF(phone, '')) AS contact"
+            " FROM public.people WHERE id = ANY($1)",
             person_ids)
         return {r["id"]: {"id": r["id"], "name": r["name"], "department": r["department"],
                           "role": r["role"], "contact": r["contact"]} for r in rows}
+
+    @staticmethod
+    async def _load_related_contents(person_ids: list[str]) -> dict[str, list[dict]]:
+        """候选人已发布内容(卡片「相关发布内容」;人员详情/内容详情跳转用)。"""
+        if not person_ids:
+            return {}
+        # 每人至多 3 条(按创建时间倒序)
+        rows2 = await db.fetch(
+            "SELECT owner_id, id, title, rank FROM ("
+            "  SELECT owner_id, id, title,"
+            "         row_number() OVER (PARTITION BY owner_id ORDER BY created_at DESC) AS rank"
+            "  FROM public.contents WHERE owner_id = ANY($1) AND status = 'published'"
+            ") t WHERE rank <= 3",
+            person_ids)
+        result = {}
+        for r in rows2:
+            result.setdefault(r["owner_id"], []).append({"id": r["id"], "title": r["title"]})
+        return result
 
     @staticmethod
     async def _log_recommendation(final: AgentState, *, ids: dict, trace_id: str,
@@ -261,7 +419,10 @@ def _build_reasons(candidate: dict) -> list[str]:
         if etype == "explicit_self_tag" and detail.get("source_raw_tag"):
             reasons.append(f"负责领域命中:{detail['source_raw_tag']}")
         elif etype == "inferred_from_profile":
-            reasons.append("自画像与问题相关")
+            if detail.get("no_exact_match"):
+                reasons.append(f"可能相关:{detail.get('reason') or '具备相近岗位或领域经验'}")
+            else:
+                reasons.append("自画像与问题相关")
         elif etype == "inferred_from_article":
             hint = detail.get("title_hint") or detail.get("document_id") or ""
             reasons.append(f"发布过相关内容:{hint}" if hint else "发布过相关内容")

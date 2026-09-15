@@ -2,7 +2,7 @@
 type: people
 id: person-p-0016
 title: 沈辰思(高级工程师)
-version: 1
+version: 3
 status: published
 visibility: internal
 sensitivity: 0
@@ -10,7 +10,7 @@ source_type: public.people
 source_id: p-0016
 source_uri: public.people/p-0016
 owner_department_id: 11
-updated_at: 1786639753.9819036
+updated_at: 1786927130.836003
 content_hash: 504a75454f9d4a063073dccdcb6f09cf902717da8ebbec283f831b2cbdba375e
 extra:
   has_review_narrative: false

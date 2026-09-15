@@ -6,6 +6,17 @@ import { useDirectoryStore } from "./directory.js";
 
 const storedAuth = loadJson(STORAGE_KEYS.auth, {});
 
+/** 切换登录态后重置各数据 store 的 loaded 标记,确保重新拉取新用户数据 */
+async function resetDataStores() {
+  const [{ useContentStore }, { useReviewsStore }, { useSessionsStore }, { useDirectoryStore }] = await Promise.all([
+    import("./content.js"), import("./reviews.js"), import("./sessions.js"), import("./directory.js"),
+  ]);
+  useDirectoryStore().loaded = false;
+  useContentStore().loaded = false;
+  useReviewsStore().loaded = false;
+  useSessionsStore().loaded = false;
+}
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     isLoggedIn: Boolean(storedAuth.isLoggedIn),
@@ -88,6 +99,7 @@ export const useAuthStore = defineStore("auth", {
         useDirectoryStore().setCurrentUser(this.userId);
         this.persist();
         this.initialized = true;
+        await resetDataStores();
         return { ok: true };
       }
       const key = normalize(account);
@@ -110,6 +122,7 @@ export const useAuthStore = defineStore("auth", {
       if (isServerMode()) await serverLogout().catch(console.warn);
       this.clearSession();
       useDirectoryStore().setCurrentUser(currentUserId);
+      await resetDataStores();
     },
     changePassword({ currentPassword, nextPassword, confirmPassword }) {
       if (currentPassword !== this.mockPassword) return "原密码不正确";
@@ -118,14 +131,20 @@ export const useAuthStore = defineStore("auth", {
       this.mockPassword = nextPassword;
       return "";
     },
-    updateProfile(patch) {
-      const allowed = ["contact", "domainsText", "selfPortrait", "addDomains"];
+    async updateProfile(patch) {
+      const allowed = ["contact", "domainsText", "selfPortrait", "addDomains", "removeDomains"];
       const profilePatch = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
       const person = useDirectoryStore().updatePerson(this.userId, profilePatch);
-      if (person) {
-        this.name = person.name;
-        this.persist();
-        if (isServerMode()) updateMyProfile(person).catch(console.warn);
+      if (!person) return { ok: false, message: "本地名录未同步到当前用户,请刷新页面后重试" };
+      this.name = person.name;
+      this.persist();
+      if (isServerMode()) {
+        try {
+          await updateMyProfile(person);
+        } catch (error) {
+          console.warn("资料同步失败:", error);
+          return { ok: false, message: "资料同步到服务器失败，请重试" };
+        }
       }
       return person;
     },

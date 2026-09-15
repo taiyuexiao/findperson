@@ -42,20 +42,24 @@ router.beforeEach(async (to) => {
   if (to.name === "login") return true;
   const sessions = useSessionsStore();
   sessions.init();
-  try {
-    await Promise.all([
-      useDirectoryStore().loadPeople(),
-      useContentStore().loadContents(),
-      useReviewsStore().loadReviews(),
-      sessions.loadSessions(),
-    ]);
-  } catch (error) {
-    if (error.status === 401) {
-      auth.clearSession();
-      return { name: "login", query: { redirect: to.fullPath } };
-    }
-    throw error;
+  // allSettled:任一数据接口失败不阻塞导航(仅 401 跳登录),避免页面假死
+  const results = await Promise.allSettled([
+    useDirectoryStore().loadPeople(),
+    useContentStore().loadContents(),
+    useReviewsStore().loadReviews(),
+    useReviewsStore().loadPendingTags(),
+    sessions.loadSessions(),
+  ]);
+  const authFailure = results.find(
+    (r) => r.status === "rejected" && r.reason?.status === 401,
+  );
+  if (authFailure) {
+    auth.clearSession();
+    return { name: "login", query: { redirect: to.fullPath } };
   }
+  results.forEach((r) => {
+    if (r.status === "rejected") console.warn("数据加载失败(已放行导航):", r.reason);
+  });
   if (to.name === "admin" && !auth.isAdmin) return { name: "ask" };
   return true;
 });

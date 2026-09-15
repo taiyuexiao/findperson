@@ -31,7 +31,7 @@ export const useAdminStore = defineStore("admin", {
       return useDirectoryStore().activePeople
         .map((person) => ({ person, value: person.recommendedCount }))
         .sort((a, b) => b.value - a.value)
-        .slice(0, 10);
+        .slice(0, 5);
     },
     trend() {
       if (this.serverTrend) return this.serverTrend;

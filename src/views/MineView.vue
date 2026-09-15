@@ -10,7 +10,7 @@
         </template>
       </ProfileSummary>
 
-      <section v-if="department" class="profile-block department-responsibility-block">
+      <section v-if="department && isLeader" class="profile-block department-responsibility-block">
         <div class="content-section-head"><div><h2>部门职责</h2><p class="person-meta">{{ canManageResponsibilities ? '负责部门及下级部门职责' : department.name }}</p></div></div>
         <div v-if="canManageResponsibilities" class="responsibility-manager">
           <div class="responsibility-filter-row">
@@ -82,7 +82,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
-import { ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { EditPen, Search } from "@element-plus/icons-vue";
 import PeerReviewList from "../components/profile/PeerReviewList.vue";
 import ProfileEditor from "../components/profile/ProfileEditor.vue";
@@ -113,6 +113,11 @@ const supervisor = computed(() => directory.getPersonSupervisor(profile.value?.i
 const department = computed(() => directory.getDepartment(profile.value?.department));
 const managedRoots = computed(() => directory.managedDepartments(auth.userId));
 const canManageResponsibilities = computed(() => managedRoots.value.length > 0);
+/** 领导判定:管理的部门中有"xx部"(L2/L3部负责人),或本人属总经理室;L4组长与普通成员不显示部门职责栏目 */
+const isLeader = computed(() =>
+  managedRoots.value.some((d) => d.name.endsWith("部"))
+  || profile.value?.department === "总经理室"
+);
 const responsibilityFilter = ref("");
 const responsibilityDrafts = reactive({});
 const responsibilityOptions = computed(() => directory.manageableDepartments(auth.userId));
@@ -201,6 +206,8 @@ function editContent(id) {
 }
 
 onMounted(() => {
+  reviews.loadPendingTags();  // 信任分级:待放行标签通知
+  reviews.loadPersonReviews(getActiveUserId());  // 他画像:拉我收到的全部评价
   const draft = drafts.get(route.query.draftId, "profile");
   if (route.query.edit !== "profile" || !draft) return;
   startEdit();
@@ -221,3 +228,13 @@ onBeforeRouteLeave(async () => {
   }
 });
 </script>
+
+<style scoped>
+.pending-tags-block { width: 100%; }
+.pending-tag-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 0; border-bottom: 1px solid #eef2f7;
+}
+.pending-tag-item:last-child { border-bottom: 0; }
+.pending-tag-actions { display: inline-flex; gap: 8px; flex: 0 0 auto; }
+</style>

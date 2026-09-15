@@ -1,11 +1,11 @@
-<template>
+﻿<template>
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
         <img :src="logoUrl" alt="">
       </span>
       <div>
-        <strong>首问责任平台</strong>
+        <strong>首问必答平台</strong>
         <span>展示型交互 Demo</span>
       </div>
     </div>
@@ -32,5 +32,6 @@ const navItems = [
   { name: "admin", label: "后台管理", icon: DataAnalysis },
 ];
 const auth = useAuthStore();
-const visibleNavItems = computed(() => navItems.filter((item) => item.name !== "admin" || auth.isAdmin));
+const ADMIN_ONLY = ["admin"];
+const visibleNavItems = computed(() => navItems.filter((item) => !ADMIN_ONLY.includes(item.name) || auth.isAdmin));
 </script>

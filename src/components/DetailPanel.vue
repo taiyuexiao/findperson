@@ -11,7 +11,7 @@
       <div class="detail-header">
         <h2>{{ personOf(detail.personId)?.name }}</h2>
         <p>{{ departmentText(personOf(detail.personId)) }} · {{ personOf(detail.personId)?.role }}</p>
-        <p>联系方式：{{ personOf(detail.personId)?.contact }}</p>
+        <p>联系方式：{{ personOf(detail.personId)?.contact || personOf(detail.personId)?.phone }}</p>
       </div>
       <div class="field-row">
         <span v-for="tag in personOf(detail.personId)?.domains" :key="tag" class="tag">{{ tag }}</span>
@@ -51,22 +51,64 @@
       <button class="primary-button small-button" @click="$emit('content', detail.contentId)">查看详情页</button>
     </template>
 
-    <!-- ── 内容发布草稿 ── -->
+    <!-- ── 内容发布草稿(可直接修改) ── -->
     <template v-else-if="detail.type === 'contentDraft'">
       <div class="detail-panel-top">
         <div class="detail-panel-label">内容发布草稿</div>
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
       <div class="detail-card">
-        <h2>{{ detail.draft?.title || '未命名草稿' }}</h2>
-        <p>{{ detail.draft?.tags?.join('、') || '未设置标签' }}</p>
-        <p>{{ detail.draft?.summary || '暂无摘要' }}</p>
-      </div>
-      <div class="field-row">
-        <span v-for="tag in (detail.draft?.tags || [])" :key="tag" class="tag">{{ tag }}</span>
+        <h3>标题</h3>
+        <input class="detail-edit-input" :value="detail.draft?.title" @input="updateDraftField('title', $event.target.value)" />
+        <h3>关联领域(顿号分隔)</h3>
+        <input class="detail-edit-input" :value="(detail.draft?.tags || []).join('、')" @input="updateDraftField('tags', $event.target.value)" />
+        <h3>摘要</h3>
+        <textarea class="detail-edit-input" rows="3" :value="detail.draft?.summary" @input="updateDraftField('summary', $event.target.value)"></textarea>
+        <h3>正文</h3>
+        <textarea class="detail-edit-input detail-edit-body" :value="detail.draft?.body" @input="updateDraftField('body', $event.target.value)"></textarea>
       </div>
       <div class="thread-card-actions">
-        <button class="secondary-button small-button" @click="$emit('mine')">去我的主页</button>
+        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmContent')">确认发布</button>
+        <button class="secondary-button small-button" @click="$emit('mine')">去发布页继续编辑</button>
+      </div>
+    </template>
+
+    <!-- ── 他人画像草稿(上:画像事项表单,与个人中心-为他人画像同模块;下:画像对象信息) ── -->
+    <template v-else-if="detail.type === 'reviewAction'">
+      <div class="detail-panel-top">
+        <div class="detail-panel-label">为 {{ reviewPerson?.name || '同事' }} 画像</div>
+        <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
+      </div>
+      <!-- 上:画像事项表单(同事/日期/事项,与个人中心-为他人画像同结构) -->
+      <div class="detail-card">
+        <label class="detail-edit-field">
+          <span>同事</span>
+          <input class="detail-edit-input" :value="reviewPerson?.name || '待确认人员'" disabled />
+        </label>
+        <label class="detail-edit-field">
+          <span>日期</span>
+          <input class="detail-edit-input" :value="detail.action?.nextReview?.date" disabled />
+        </label>
+        <label class="detail-edit-field">
+          <span>负责领域</span>
+          <input class="detail-edit-input" :value="detail.action?.nextReview?.tag" @input="updateReviewField('tag', $event.target.value)" placeholder="请输入负责领域(顿号分隔)" />
+        </label>
+      </div>
+      <!-- 下:画像对象信息(紧凑展示) -->
+      <div class="detail-card">
+        <div class="detail-panel-label">画像对象</div>
+        <h2>{{ reviewPerson?.name }}</h2>
+        <p>{{ departmentText(reviewPerson) }} · {{ reviewPerson?.role }}</p>
+        <p>联系方式：{{ reviewPerson?.contact || reviewPerson?.phone }}</p>
+        <div class="field-row" v-if="reviewPerson?.domains?.length">
+          <span v-for="tag in reviewPerson.domains" :key="tag" class="tag">{{ tag }}</span>
+        </div>
+      </div>
+      <!-- 操作按钮上下排列,均独占一行蓝底白字 -->
+      <div class="thread-card-actions detail-action-stack">
+        <button v-if="!detail.confirmed" class="primary-button small-button" @click="$emit('confirmReview')">确认保存画像</button>
+        <button class="primary-button small-button" @click="$emit('profile', detail.action?.nextReview?.personId)">查看完整主页</button>
+        <button class="primary-button small-button" @click="$emit('mine')">去画像页修改</button>
       </div>
     </template>
 
@@ -77,16 +119,20 @@
         <button class="detail-close-button" @click="$emit('close')"><span>收起</span><strong>×</strong></button>
       </div>
       <div class="detail-card">
-        <h2>{{ detail.action?.confirmed ? '资料维护已完成' : '待更新字段' }}</h2>
-        <div v-if="detail.action?.changes?.length" class="action-preview">
-          <span v-for="item in detail.action.changes" :key="item">{{ item }}</span>
-        </div>
+        <h2>{{ detail.action?.confirmed ? '资料维护已完成' : '待更新字段(可直接修改)' }}</h2>
+        <template v-if="profilePatchEntries.length">
+          <label v-for="entry in profilePatchEntries" :key="entry.key" class="detail-edit-field">
+            <span>{{ entry.label }}</span>
+            <textarea v-if="entry.key === 'selfPortrait'" class="detail-edit-input" rows="3" :value="entry.text" @input="updateProfileField(entry.key, $event.target.value)"></textarea>
+            <input v-else class="detail-edit-input" :value="entry.text" @input="updateProfileField(entry.key, $event.target.value)" />
+          </label>
+        </template>
         <p v-else>暂未识别到完整字段，可进入个人中心手动补充。</p>
       </div>
       <div v-if="profileUser" class="detail-card">
         <h3>当前用户信息</h3>
         <p>{{ profileUser.name }} · {{ departmentText(profileUser) }} · {{ profileUser.role }}</p>
-        <p>联系方式：{{ profileUser.contact }}</p>
+        <p>联系方式：{{ profileUser.contact || profileUser.phone }}</p>
       </div>
       <div class="thread-card-actions">
         <button v-if="!detail.action?.confirmed && canConfirmProfile" class="primary-button small-button" @click="$emit('confirmProfile')">
@@ -130,7 +176,7 @@ const props = defineProps({
   /** 当前登录用户 ID */
   currentUserId: String,
 });
-defineEmits(['close', 'profile', 'content', 'mine', 'confirmProfile', 'toggleFeedback']);
+defineEmits(['close', 'profile', 'content', 'mine', 'confirmProfile', 'confirmContent', 'confirmReview', 'toggleFeedback']);
 
 // ── 查找工具 ──
 const personOf = (id) => props.people.find((item) => item.id === id);
@@ -147,4 +193,81 @@ const personRelated = computed(() => {
 
 const profileUser = computed(() => personOf(props.currentUserId));
 const canConfirmProfile = computed(() => Object.keys(props.detail?.action?.nextProfilePatch || {}).length > 0);
+// 他人画像:被画像人详情(结构对齐查人侧栏)
+const reviewPerson = computed(() => personOf(props.detail?.action?.nextReview?.personId));
+
+// ── 侧边栏直接修改(改动写回卡片 action,确认时生效) ──
+const PROFILE_FIELD_LABELS = {
+  contact: '联系方式',
+  addDomains: '负责领域(新增,顿号分隔)',
+  removeDomains: '负责领域(删除,顿号分隔)',
+  domainsText: '负责领域',
+  selfPortrait: '自画像',
+};
+const profilePatchEntries = computed(() => {
+  const patch = props.detail?.action?.nextProfilePatch || {};
+  return Object.entries(patch).map(([key, value]) => ({
+    key,
+    label: PROFILE_FIELD_LABELS[key] || key,
+    text: Array.isArray(value) ? value.join('、') : String(value ?? ''),
+  }));
+});
+const splitList = (text) => text.split(/[、,，]/).map((s) => s.trim()).filter(Boolean);
+function updateProfileField(key, text) {
+  const patch = props.detail?.action?.nextProfilePatch;
+  if (!patch) return;
+  patch[key] = Array.isArray(patch[key]) ? splitList(text) : text;
+}
+function updateDraftField(key, text) {
+  const draft = props.detail?.draft;
+  if (!draft) return;
+  draft[key] = key === 'tags' ? splitList(text) : text;
+}
+function updateReviewField(key, text) {
+  const review = props.detail?.action?.nextReview;
+  if (!review) return;
+  review[key] = text;
+}
 </script>
+
+<style scoped>
+/* 侧栏操作按钮:竖排堆叠,每个独占一行 */
+.detail-action-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* 侧边栏直接修改输入框(与全局卡片风格一致的轻量样式) */
+.detail-edit-field {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.detail-edit-field > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary, #666);
+}
+.detail-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color, #dcdfe6);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.detail-card h3 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+/* 正文编辑框:大框+限高滚动(长正文上下滑动) */
+.detail-edit-body {
+  min-height: 220px;
+  max-height: 45vh;
+  overflow-y: auto;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+</style>

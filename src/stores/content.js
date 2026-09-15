@@ -43,7 +43,8 @@ export const useContentStore = defineStore("content", {
       if (!isServerMode()) saveMockContent(this.contents);
     },
     async loadContents() {
-      if (this.loaded && !isServerMode()) return;
+      // 已加载过就直接复用(含 server 模式),避免每次导航全量重拉
+      if (this.loaded) return;
       // server 模式默认分页只有 20 条,名片/问答详情需要全量(数据集 620 条,一次拉取)
       this.contents = isServerMode() ? await fetchContents({ page_size: 500 }) : getMockContent();
       this.loaded = true;

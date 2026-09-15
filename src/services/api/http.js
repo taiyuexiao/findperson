@@ -21,7 +21,8 @@ http.interceptors.response.use(
       403: "当前账号没有权限执行该操作",
       500: "服务端处理异常，请稍后重试",
     };
-    const normalized = new Error(error.response?.data?.message || messageMap[status] || error.message || "网络请求失败");
+    const serverMessage = error.response?.data?.detail || error.response?.data?.message;
+    const normalized = new Error(serverMessage || messageMap[status] || error.message || "网络请求失败");
     normalized.status = status;
     normalized.payload = error.response?.data;
     if (status === 401) {

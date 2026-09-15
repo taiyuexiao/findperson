@@ -1,5 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// state.js — 首问责任平台 数据层
+﻿// ═══════════════════════════════════════════════════════════════════════════
+// state.js — 首问必答平台 数据层
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // 包含：localStorage 键名、种子人员、部门层级、推荐次数、种子内容、
@@ -467,6 +467,12 @@ export function normalize(value) {
 /** 规范化人员记录：补齐 departmentPath 和 recommendedCount */
 export function normalizePersonRecord(person) {
   const department = person.department || person.departmentPath?.at(-1) || "未分组";
+  const recommendedCount =
+    typeof person.recommendedCount === "number"
+      ? person.recommendedCount
+      : (typeof person.recommended_count === "number"
+          ? person.recommended_count
+          : (recommendedCountMap[person.id] || 0));
   return {
     ...person,
     department,
@@ -474,12 +480,13 @@ export function normalizePersonRecord(person) {
       Array.isArray(person.departmentPath) && person.departmentPath.length
         ? person.departmentPath.slice()
         : (departmentHierarchyMap[department] || ["未分组", department]),
-    recommendedCount:
-      typeof person.recommendedCount === "number"
-        ? person.recommendedCount
-        : (recommendedCountMap[person.id] || 0),
-    systemRole: person.systemRole || (person.id === currentUserId ? "管理员" : "普通成员"),
+    selfPortrait: person.selfPortrait ?? person.self_portrait ?? "",
+    domains: Array.isArray(person.domains) ? person.domains : [],
+    recommendedCount,
+    systemRole: person.systemRole || person.system_role || (person.id === currentUserId ? "管理员" : "普通成员"),
     active: person.active !== false,
+    // 直接上级(server 模式来自 users.manager_id;验收#7 树状汇报关系)
+    managerId: person.managerId || person.manager_id || null,
   };
 }
 

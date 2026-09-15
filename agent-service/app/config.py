@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     embedding_provider: str = "mock"
     embedding_base_url: str = ""      # OpenAI 兼容服务地址,如 https://dashscope.aliyuncs.com/compatible-mode/v1
     embedding_api_key: str = ""
+    embedding_model_path: str = ""    # fastembed 本地 ONNX 模型目录(可选)
     embedding_model: str = "text-embedding-v4"
     rag_embedding_dim: int = 1536     # RAG 向量空间:与仓库 knowledge-service 对齐 1536
     concept_embedding_dim: int = 512  # Concept 独立向量空间(仅 Agent 内部使用)

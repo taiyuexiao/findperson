@@ -65,14 +65,23 @@ async def main() -> None:
 
         # ---- PersonProfile(§10.4)----
         people = await conn.fetch("SELECT * FROM public.people WHERE status='active' ORDER BY id")
+        # 同事评价聚合正文(§10.4 白名单允许,低权重)
+        review_rows = await conn.fetch(
+            "SELECT person_id, tag_name FROM public.peer_reviews")
+        reviews_by_person: dict = {}
+        for r in review_rows:
+            reviews_by_person.setdefault(r["person_id"], set()).add(r["tag_name"])
         for p in people:
-            await _publish(build_person_profile_doc(dict(p)))
+            tags = reviews_by_person.get(p["id"], set())
+            await _publish(build_person_profile_doc(
+                dict(p), reviews_text="、".join(sorted(tags))))
         print(f"[publish] people: {len(people)}")
 
-        # ---- Contents ----
+        # ---- Contents(仅已发布,与增量链路"审核通过才可检索"语义一致) ----
         contents = await conn.fetch(
             "SELECT c.*, p.name AS owner_name, p.department_id AS owner_dept_id FROM public.contents c"
-            " LEFT JOIN public.people p ON p.id = c.owner_id ORDER BY c.id"
+            " LEFT JOIN public.people p ON p.id = c.owner_id"
+            " WHERE c.status='published' AND COALESCE(c.is_deleted, false)=false ORDER BY c.id"
         )
         for c in contents:
             await _publish(build_content_doc(dict(c), owner_name=c["owner_name"] or "",

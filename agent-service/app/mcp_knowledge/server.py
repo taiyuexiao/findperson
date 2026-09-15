@@ -19,6 +19,22 @@ from app.okf.repository import OkfRepository
 from app.rag.retriever import HybridRetriever
 
 
+def _shared_token(a: str, b: str) -> bool:
+    """语义兜底防误伤闸:两个字符串需有实质词元重叠(CJK 2-gram 或拉丁词)。
+    如 堡垒机 vs 大模型网关与API Key → 无重叠 → 不当作正式责任返回。"""
+    import re
+    a, b = a.lower(), b.lower()
+    latin_a = set(re.findall(r"[a-z0-9+#.]{2,}", a))
+    latin_b = set(re.findall(r"[a-z0-9+#.]{2,}", b))
+    if latin_a & latin_b:
+        return True
+    for i in range(len(a) - 1):
+        gram = a[i:i + 2]
+        if any('一' <= ch <= '鿿' for ch in gram) and gram in b:
+            return True
+    return False
+
+
 class KnowledgeMcpServer:
     """知识 MCP 服务。8 个只读工具。"""
 
@@ -85,14 +101,14 @@ class KnowledgeMcpServer:
         resp_docs = [d for d in published if d.metadata.type.value == "responsibilities"]
         matched = [d for d in resp_docs
                    if any(n in d.metadata.title or n in d.body for n in names)]
-        # 标题未命中时回退混合检索(语义兜底)
+        # 标题未命中时回退混合检索(语义兜底;防误伤闸:标题与查询名须有实质词元重叠)
         if not matched:
             for name in names:
                 hits = await self._retriever.retrieve(name, ctx, top_k=10)
                 for h in hits:
                     if h.document_type == "responsibilities":
                         doc = await self._repo.get_latest(h.document_id)
-                        if doc and doc not in matched:
+                        if doc and doc not in matched and _shared_token(name, doc.metadata.title):
                             matched.append(doc)
         for doc in matched:
             e = doc.extra

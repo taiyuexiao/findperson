@@ -1,4 +1,4 @@
-"""LLM Client(V1.2 §14.1)。
+﻿"""LLM Client(V1.2 §14.1)。
 
 职责:Hermes/OpenAI 兼容 API 调用、timeout、并发控制、model config、Mock、
 usage/Token 统计、error mapping。不维护任何业务 Prompt(业务 Prompt 归各 Node)。
@@ -21,6 +21,22 @@ import httpx
 
 from app.config import get_settings
 from app.contracts.errors import AgentError, ErrorCode
+
+
+# ---------------------------------------------------------------- 共享 HTTP 客户端
+# 复用 TCP/TLS 连接(Keep-Alive),避免每次调用重付握手开销(验收:响应慢)
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client(timeout: float) -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
+        )
+    return _http_client
 
 
 @dataclass
@@ -114,12 +130,11 @@ class DeepSeekLLM:
         start = time.time()
         try:
             async with self._sem:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
-                        self._url,
-                        headers={"Authorization": f"Bearer {self._api_key}"},
-                        json=payload,
-                    )
+                resp = await _get_http_client(self._timeout).post(
+                    self._url,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=payload,
+                )
         except httpx.TimeoutException as e:
             raise AgentError(ErrorCode.TIMEOUT, f"LLM 调用超时: {e}") from e
         except httpx.HTTPError as e:

@@ -1,6 +1,6 @@
 -- 03_rag.sql —— RAG 在线检索层(V1.2 §17 rag schema)
--- OKF 派生的在线索引,不是事实源。RAG 向量 1536 维(与仓库 knowledge-service 对齐,
--- 生产 text-embedding-v4),与 Concept 独立向量空间互不可比(§10.8)。
+-- OKF 派生的在线索引,不是事实源。RAG 向量 512 维(本地 fastembed bge-small-zh-v1.5,
+-- 离线确定性;与 Concept 独立向量空间互不可比,§10.8)。
 
 CREATE TABLE IF NOT EXISTS rag.rag_documents (
     document_id     TEXT NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS rag.rag_chunks (
     content         TEXT NOT NULL,
     metadata        JSONB NOT NULL DEFAULT '{}',
     token_count     INTEGER NOT NULL DEFAULT 0,
-    embedding       vector(1536),               -- RAG 向量空间(1536 维,与 knowledge-service 对齐)
+    embedding       vector(512),                -- RAG 向量空间(512 维,bge-small-zh 本地模型)
     embedding_model TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chunk_id, index_version)

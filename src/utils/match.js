@@ -1,5 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// match.js — 首问责任平台 智能匹配逻辑层
+﻿// ═══════════════════════════════════════════════════════════════════════════
+// match.js — 首问必答平台 智能匹配逻辑层
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // 包含：问题分析、关键词抽取、意图推断、人员评分、内容匹配、
@@ -57,7 +57,7 @@ export function extractTokens(normalized, domainDictionary) {
 export function inferIntent(normalized) {
   if (/(登录|密码)/.test(normalized)) return "账号访问";
   if (/(操作手册|手册|怎么用)/.test(normalized)) return "平台使用";
-  if (/(我要评价|评价一下|补充评价)/.test(normalized)) return "评价他人";
+  if (/(我要画像|画像一下|补充画像)/.test(normalized)) return "他人画像";
   if (/(我要发布|发布|发一篇|写一个|流程说明|常见问题)/.test(normalized)) return "内容发布";
   if (/(修改|更新|维护|改我的|联系方式|负责领域|自画像|个人信息)/.test(normalized)) return "信息维护";
   if (/(找谁|谁负责|问谁|联系谁)/.test(normalized)) return "问题找人";
@@ -69,7 +69,7 @@ export function inferIntent(normalized) {
 // ── 助手动作生成 ───────────────────────────────────────────────────────────
 
 /**
- * 根据问题分析结果生成助手待确认动作（资料维护 / 评价 / 内容发布）
+ * 根据问题分析结果生成助手待确认动作（资料维护 / 画像 / 内容发布）
  * @returns {{ type, title, description, changes?, nextProfilePatch?, nextReview?, nextContent? }}
  */
 export function buildAssistantAction(
@@ -126,14 +126,14 @@ export function buildAssistantAction(
     };
   }
 
-  // ── 他人评价 ──
-  if (/(我要评价|评价一下|补充评价)/.test(normalized)) {
+  // ── 他人画像 ──
+  if (/(我要画像|画像一下|补充画像)/.test(normalized)) {
     const person =
       matches[0]?.person || peopleList.find((item) => item.id !== currentUserId);
     return {
       type: "review",
-      title: "已生成一条待确认评价",
-      description: "我先根据你的表述生成了一条评价草稿，你确认后会写入对方主页。",
+      title: "已生成一条待确认画像",
+      description: "我先根据你的表述生成了一条画像草稿，你确认后会写入对方主页。",
       nextReview: {
         id: `review-${Date.now()}`,
         personId: person.id,
@@ -156,7 +156,7 @@ export function buildAssistantAction(
         id: `c-${Date.now()}`,
         ownerId: currentUserId,
         title: `${focusDomain}相关说明`,
-        tags: [focusDomain, "首问责任平台"],
+        tags: [focusDomain, "首问必答平台"],
         summary: `围绕${focusDomain}整理办理步骤、常见卡点和咨询入口。`,
         body: "一、适用场景\n二、办理步骤\n三、常见问题与联系路径",
         publishedAt: getTodayText(),
@@ -294,7 +294,7 @@ export function getAssistantReply(result) {
   const firstContent = result.contentHits?.[0];
 
   if (result.action.type === "profile") return result.action.description;
-  if (result.action.type === "review") return "好的，我为你整理了一条评价草稿，请确认。";
+  if (result.action.type === "review") return "好的，我为你整理了一条画像草稿，请确认。";
   if (result.action.type === "content") return result.action.description;
   if (primary) return "好的，下面为你推荐相关负责人。";
   return "目前还没有找到足够明确的对象，建议补充系统名、流程名或材料名。";
